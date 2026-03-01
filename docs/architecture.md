@@ -13,7 +13,7 @@
 7. Risk score is calculated.
 8. Alerts are cooldown-filtered (dedup).
 9. Detailed message is generated (evidence + fix actions).
-10. Optional AI guidance is appended.
+10. Optional AI guidance is appended (OpenAI or Ollama).
 11. Message is sent through configured notifier(s).
 12. Delivery state and history are persisted.
 
@@ -91,4 +91,3 @@
 - Service SSH detection in `ServiceRules` is Linux-oriented (`ssh.service` / `sshd.service`).
 - Default file paths are Linux-style (`/tmp/...`), so Windows deployments should override them.
 - `AppAnalyzer` currently returns a static app profile and can be replaced with real project inspection later.
-

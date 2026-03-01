@@ -40,6 +40,9 @@ If no CLI interval is provided, `ScanIntervalSeconds` is used.
 | `AlertHistoryMaxEntries` | `5000` | `1..200000` | Max retained history entries |
 | `WebhookUrl` | `""` | absolute `http/https` when set | Optional webhook endpoint |
 | `WebhookAuthHeader` | `Authorization` | optional | Header name for webhook auth |
+| `EnableOllamaSuggestions` | `false` | cannot be true with `EnableOpenAiSuggestions` | Enables local Ollama AI suggestions |
+| `OllamaBaseUrl` | `http://localhost:11434` | absolute `http/https` when Ollama enabled | Ollama server URL |
+| `OllamaModel` | `llama3.2` | required when Ollama enabled | Ollama model name |
 | `CpuSpikeMultiplier` | `1.5` | `1..10` | CPU load vs cores critical multiplier |
 | `DiskUsageWarningPercent` | `85` | `1..100` | Disk warning threshold |
 | `RamUsageWarningPercent` | `85` | `1..100` | RAM warning threshold |
@@ -91,6 +94,16 @@ Webhook payload shape:
 - Retry policy applies per channel.
 - If one channel fails, cycle delivery is marked failed.
 
+## AI Provider Behavior
+
+- `EnableOpenAiSuggestions=true` uses `OpenAiAdvisor`.
+- `EnableOllamaSuggestions=true` uses `OllamaAdvisor`.
+- You cannot enable both providers at the same time.
+- OpenAI requires `OPENAI_API_KEY`.
+- Ollama requires:
+  - `OllamaBaseUrl` (for example `http://localhost:11434`)
+  - `OllamaModel` (for example `llama3.2`)
+
 ## Example `guardian.json`
 
 ```json
@@ -101,6 +114,9 @@ Webhook payload shape:
   "AlertHistoryMaxEntries": 5000,
   "WebhookUrl": "",
   "WebhookAuthHeader": "Authorization",
+  "EnableOllamaSuggestions": false,
+  "OllamaBaseUrl": "http://localhost:11434",
+  "OllamaModel": "llama3.2",
   "CpuSpikeMultiplier": 1.5,
   "DiskUsageWarningPercent": 85,
   "RamUsageWarningPercent": 85,
@@ -117,4 +133,3 @@ Webhook payload shape:
   "EnableOpenAiSuggestions": false
 }
 ```
-

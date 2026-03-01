@@ -89,7 +89,7 @@ var riskCalculator = new RiskCalculator(
 
 var appAnalyzer = new AppAnalyzer();
 var appProfile = appAnalyzer.Analyze();
-var openAiAdvisor = options.EnableOpenAiSuggestions ? new OpenAiAdvisor() : null;
+var aiAdvisor = BuildAiAdvisor(options);
 
 var rules = new List<IRule<ServerContext>>
 {
@@ -124,7 +124,7 @@ if (runInterval <= TimeSpan.Zero)
         alertDeduplicator,
         historyStore,
         notifier,
-        openAiAdvisor,
+        aiAdvisor,
         appProfile,
         options,
         logger,
@@ -152,7 +152,7 @@ while (!shutdownToken.IsCancellationRequested)
         alertDeduplicator,
         historyStore,
         notifier,
-        openAiAdvisor,
+        aiAdvisor,
         appProfile,
         options,
         logger,
@@ -185,7 +185,7 @@ static async Task ExecuteCycleAsync(
     AlertDeduplicator alertDeduplicator,
     AlertHistoryStore historyStore,
     INotifier? notifier,
-    OpenAiAdvisor? openAiAdvisor,
+    IAiAdvisor? aiAdvisor,
     AppAnalysisResult appProfile,
     GuardianOptions options,
     ILogger logger,
@@ -266,9 +266,9 @@ static async Task ExecuteCycleAsync(
         };
 
         var message = BuildAlertMessage(sendableReport, suppressedCount, nowUtc, context, appProfile);
-        message = await AppendOpenAiSuggestionsAsync(
+        message = await AppendAiSuggestionsAsync(
             message,
-            openAiAdvisor,
+            aiAdvisor,
             sendableReport,
             context,
             appProfile,
@@ -504,17 +504,17 @@ static string TrimForTelegram(string message, int maxLength)
 }
 
 /// <summary>
-/// Adds OpenAI suggestions to the alert message when advisor is enabled and available.
+/// Adds AI suggestions to the alert message when advisor is enabled and available.
 /// </summary>
-static async Task<string> AppendOpenAiSuggestionsAsync(
+static async Task<string> AppendAiSuggestionsAsync(
     string message,
-    OpenAiAdvisor? openAiAdvisor,
+    IAiAdvisor? aiAdvisor,
     DeploymentReport report,
     ServerContext context,
     AppAnalysisResult appProfile,
     CancellationToken cancellationToken)
 {
-    if (openAiAdvisor is null)
+    if (aiAdvisor is null)
     {
         return message;
     }
@@ -523,7 +523,7 @@ static async Task<string> AppendOpenAiSuggestionsAsync(
     {
         cancellationToken.ThrowIfCancellationRequested();
         var summary = BuildAdvisorSummary(report, context, appProfile);
-        var suggestions = await openAiAdvisor.GetSuggestionsAsync(summary);
+        var suggestions = await aiAdvisor.GetSuggestionsAsync(summary);
 
         if (string.IsNullOrWhiteSpace(suggestions))
         {
@@ -539,7 +539,7 @@ static async Task<string> AppendOpenAiSuggestionsAsync(
 }
 
 /// <summary>
-/// Builds compact context text for OpenAI recommendation generation.
+/// Builds compact context text for AI recommendation generation.
 /// </summary>
 static string BuildAdvisorSummary(
     DeploymentReport report,
@@ -602,6 +602,24 @@ static AlertHistoryEntry BuildHistoryEntry(
 }
 
 /// <summary>
+/// Creates AI advisor instance from runtime configuration.
+/// </summary>
+static IAiAdvisor? BuildAiAdvisor(GuardianOptions options)
+{
+    if (options.EnableOpenAiSuggestions)
+    {
+        return new OpenAiAdvisor();
+    }
+
+    if (options.EnableOllamaSuggestions)
+    {
+        return new OllamaAdvisor(options.OllamaBaseUrl, options.OllamaModel);
+    }
+
+    return null;
+}
+
+/// <summary>
 /// Creates notifier instance with retry policy when Telegram credentials are configured.
 /// </summary>
 static INotifier? BuildNotifier(GuardianOptions options)
@@ -654,6 +672,9 @@ static GuardianOptions LoadOptions(IConfiguration configuration)
         AlertHistoryMaxEntries = GetInt(configuration, "AlertHistoryMaxEntries", 5000),
         WebhookUrl = GetString(configuration, "WebhookUrl", string.Empty),
         WebhookAuthHeader = GetString(configuration, "WebhookAuthHeader", "Authorization"),
+        EnableOllamaSuggestions = GetBool(configuration, "EnableOllamaSuggestions", false),
+        OllamaBaseUrl = GetString(configuration, "OllamaBaseUrl", "http://localhost:11434"),
+        OllamaModel = GetString(configuration, "OllamaModel", "llama3.2"),
         CpuSpikeMultiplier = GetDouble(configuration, "CpuSpikeMultiplier", 1.5),
         DiskUsageWarningPercent = GetDouble(configuration, "DiskUsageWarningPercent", 85),
         RamUsageWarningPercent = GetDouble(configuration, "RamUsageWarningPercent", 85),
@@ -714,10 +735,28 @@ static void ValidateOptions(GuardianOptions options)
         errors.Add("WebhookUrl must be an absolute http/https URL.");
     }
 
+    if (options.EnableOpenAiSuggestions && options.EnableOllamaSuggestions)
+    {
+        errors.Add("EnableOpenAiSuggestions and EnableOllamaSuggestions cannot both be true.");
+    }
+
     if (options.EnableOpenAiSuggestions &&
         string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("OPENAI_API_KEY")))
     {
         errors.Add("EnableOpenAiSuggestions=true requires OPENAI_API_KEY environment variable.");
+    }
+
+    if (options.EnableOllamaSuggestions)
+    {
+        if (!IsValidHttpUrl(options.OllamaBaseUrl))
+        {
+            errors.Add("EnableOllamaSuggestions=true requires a valid OllamaBaseUrl http/https URL.");
+        }
+
+        if (string.IsNullOrWhiteSpace(options.OllamaModel))
+        {
+            errors.Add("EnableOllamaSuggestions=true requires OllamaModel.");
+        }
     }
 
     if (errors.Any())
@@ -763,6 +802,8 @@ static GuardianOptions NormalizeOptions(GuardianOptions options)
     }
 
     options.WebhookUrl = options.WebhookUrl?.Trim() ?? string.Empty;
+    options.OllamaBaseUrl = options.OllamaBaseUrl?.Trim() ?? "http://localhost:11434";
+    options.OllamaModel = options.OllamaModel?.Trim() ?? "llama3.2";
 
     if (string.IsNullOrWhiteSpace(options.WebhookAuthHeader))
     {
@@ -771,6 +812,16 @@ static GuardianOptions NormalizeOptions(GuardianOptions options)
     else
     {
         options.WebhookAuthHeader = options.WebhookAuthHeader.Trim();
+    }
+
+    if (string.IsNullOrWhiteSpace(options.OllamaBaseUrl))
+    {
+        options.OllamaBaseUrl = "http://localhost:11434";
+    }
+
+    if (string.IsNullOrWhiteSpace(options.OllamaModel))
+    {
+        options.OllamaModel = "llama3.2";
     }
 
     return options;

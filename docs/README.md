@@ -35,7 +35,9 @@ Deployment Guardian is a .NET 10 monitoring and alerting app for Linux and Windo
   - Top process snapshot
   - Per-alert evidence
   - Suggested fix actions
-- Optionally appends AI suggestions (`EnableOpenAiSuggestions=true` + `OPENAI_API_KEY`).
+- Optionally appends AI suggestions from:
+  - OpenAI (`EnableOpenAiSuggestions=true` + `OPENAI_API_KEY`)
+  - Ollama local models (`EnableOllamaSuggestions=true` + `OllamaBaseUrl` + `OllamaModel`)
 - Sends notifications to:
   - Telegram
   - Webhook
@@ -51,4 +53,3 @@ Deployment Guardian is a .NET 10 monitoring and alerting app for Linux and Windo
 - [Operations Guide](./operations.md)
 - [Development Guide](./development.md)
 - [Install Guide](./install.md)
-

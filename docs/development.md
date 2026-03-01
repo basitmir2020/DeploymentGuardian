@@ -8,6 +8,7 @@
   - Telegram bot credentials for alert delivery tests
   - Webhook endpoint for integration tests
   - `OPENAI_API_KEY` for AI suggestion path
+  - Ollama server + pulled model for local AI suggestion path
 
 ## Build And Test
 
@@ -79,4 +80,3 @@ dotnet test DeploymentGuardian.Tests/DeploymentGuardian.Tests.csproj
   - dedup behavior
   - notifier behavior
   - any new rule threshold logic
-

@@ -1,10 +1,11 @@
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using DeploymentGuardian.Abstractions;
 
 namespace DeploymentGuardian.Modules;
 
-public class OpenAiAdvisor
+public class OpenAiAdvisor : IAiAdvisor
 {
     private static readonly HttpClient HttpClient = new()
     {

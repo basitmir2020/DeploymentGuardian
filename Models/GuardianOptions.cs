@@ -8,6 +8,9 @@ public class GuardianOptions
     public int AlertHistoryMaxEntries { get; set; } = 5000;
     public string WebhookUrl { get; set; } = string.Empty;
     public string WebhookAuthHeader { get; set; } = "Authorization";
+    public bool EnableOllamaSuggestions { get; set; }
+    public string OllamaBaseUrl { get; set; } = "http://localhost:11434";
+    public string OllamaModel { get; set; } = "llama3.2";
     public double CpuSpikeMultiplier { get; set; } = 1.5;
     public double DiskUsageWarningPercent { get; set; } = 85;
     public double RamUsageWarningPercent { get; set; } = 85;

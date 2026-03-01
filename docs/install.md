@@ -56,6 +56,9 @@ OPENAI_API_KEY=
 WEBHOOK_URL=
 WEBHOOK_AUTH_HEADER=Authorization
 WEBHOOK_AUTH_VALUE=
+GUARDIAN_EnableOllamaSuggestions=false
+GUARDIAN_OllamaBaseUrl=http://localhost:11434
+GUARDIAN_OllamaModel=llama3.2
 EOF
 sudo chmod 600 /etc/deployment-guardian.env
 ```
@@ -78,6 +81,9 @@ Important fields:
 - `NotificationBaseDelaySeconds`: retry backoff base delay.
 - `WebhookUrl`: optional endpoint if you want HTTP webhook alerts.
 - `WebhookAuthHeader`: header name used when `WEBHOOK_AUTH_VALUE` is provided.
+- `EnableOllamaSuggestions`: enable local Ollama-based AI suggestions.
+- `OllamaBaseUrl`: Ollama endpoint (default `http://localhost:11434`).
+- `OllamaModel`: local model name to use for suggestions.
 
 ## 6) Create systemd service
 
