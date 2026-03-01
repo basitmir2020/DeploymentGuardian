@@ -48,20 +48,34 @@ sudo chown -R dg-guardian:dg-guardian /opt/deployment-guardian
 
 ```bash
 sudo tee /etc/deployment-guardian.env >/dev/null <<'EOF'
-TELEGRAM_TOKEN=replace_with_token
-TELEGRAM_CHAT_ID=replace_with_chat_id
+# Optional Telegram channel:
+TELEGRAM_TOKEN=
+TELEGRAM_CHAT_ID=
 
-# Optional:
-OPENAI_API_KEY=
+# Optional Webhook channel:
 WEBHOOK_URL=
 WEBHOOK_AUTH_HEADER=Authorization
 WEBHOOK_AUTH_VALUE=
+
+# Optional OpenAI provider:
+GUARDIAN_EnableOpenAiSuggestions=false
+OPENAI_API_KEY=
+
+# Optional Ollama local-model provider:
 GUARDIAN_EnableOllamaSuggestions=false
 GUARDIAN_OllamaBaseUrl=http://localhost:11434
 GUARDIAN_OllamaModel=llama3.2
 EOF
 sudo chmod 600 /etc/deployment-guardian.env
 ```
+
+Notes:
+
+- Configure at least one notification channel (`TELEGRAM_*` or `WEBHOOK_URL`) to receive outbound alerts.
+- AI provider flags are mutually exclusive:
+  - `GUARDIAN_EnableOpenAiSuggestions=true` for OpenAI.
+  - `GUARDIAN_EnableOllamaSuggestions=true` for local Ollama.
+  - Do not enable both at the same time.
 
 ## 5) Configure app settings (optional)
 
@@ -81,9 +95,40 @@ Important fields:
 - `NotificationBaseDelaySeconds`: retry backoff base delay.
 - `WebhookUrl`: optional endpoint if you want HTTP webhook alerts.
 - `WebhookAuthHeader`: header name used when `WEBHOOK_AUTH_VALUE` is provided.
+- `EnableOpenAiSuggestions`: enable OpenAI-based AI suggestions (requires `OPENAI_API_KEY`).
 - `EnableOllamaSuggestions`: enable local Ollama-based AI suggestions.
 - `OllamaBaseUrl`: Ollama endpoint (default `http://localhost:11434`).
 - `OllamaModel`: local model name to use for suggestions.
+
+Latest `guardian.json` template:
+
+```json
+{
+  "MemoryLogFilePath": "/tmp/guardian-memory.log",
+  "AlertStateFilePath": "/tmp/guardian-alert-state.json",
+  "AlertHistoryFilePath": "/tmp/guardian-history.jsonl",
+  "AlertHistoryMaxEntries": 5000,
+  "WebhookUrl": "",
+  "WebhookAuthHeader": "Authorization",
+  "EnableOllamaSuggestions": false,
+  "OllamaBaseUrl": "http://localhost:11434",
+  "OllamaModel": "llama3.2",
+  "CpuSpikeMultiplier": 1.5,
+  "DiskUsageWarningPercent": 85,
+  "RamUsageWarningPercent": 85,
+  "ProcessCpuCriticalPercent": 85,
+  "ProcessMemoryWarningPercent": 30,
+  "MaxOpenPortsWarningCount": 20,
+  "MemoryTrendAlertPercent": 70,
+  "MemoryTrendSamples": 5,
+  "RiskRamPercent": 80,
+  "AlertCooldownMinutes": 30,
+  "NotificationMaxAttempts": 3,
+  "NotificationBaseDelaySeconds": 2,
+  "ScanIntervalSeconds": 0,
+  "EnableOpenAiSuggestions": false
+}
+```
 
 ## 6) Create systemd service
 
