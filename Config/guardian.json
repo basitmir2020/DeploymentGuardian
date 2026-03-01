@@ -1,0 +1,22 @@
+{
+  "MemoryLogFilePath": "/tmp/guardian-memory.log",
+  "AlertStateFilePath": "/tmp/guardian-alert-state.json",
+  "AlertHistoryFilePath": "/tmp/guardian-history.jsonl",
+  "AlertHistoryMaxEntries": 5000,
+  "WebhookUrl": "",
+  "WebhookAuthHeader": "Authorization",
+  "CpuSpikeMultiplier": 1.5,
+  "DiskUsageWarningPercent": 85,
+  "RamUsageWarningPercent": 85,
+  "ProcessCpuCriticalPercent": 85,
+  "ProcessMemoryWarningPercent": 30,
+  "MaxOpenPortsWarningCount": 20,
+  "MemoryTrendAlertPercent": 70,
+  "MemoryTrendSamples": 5,
+  "RiskRamPercent": 80,
+  "AlertCooldownMinutes": 30,
+  "NotificationMaxAttempts": 3,
+  "NotificationBaseDelaySeconds": 2,
+  "ScanIntervalSeconds": 0,
+  "EnableOpenAiSuggestions": false
+}
