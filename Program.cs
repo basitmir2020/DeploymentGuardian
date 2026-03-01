@@ -348,7 +348,7 @@ static string BuildAlertMessage(
 
     var message =
         "Deployment Guardian Alert\n\n" +
-        $"Generated At (UTC): {generatedAtUtc:O}\n" +
+        $"Generated At (UTC): {FormatReadableDateTime(generatedAtUtc)}\n" +
         $"Risk Score: {report.RiskScore}/100\n" +
         $"Severity Summary: Critical={criticalCount}, Warning={warningCount}, Info={infoCount}\n" +
         $"{cooldownLine}\n\n" +
@@ -358,6 +358,14 @@ static string BuildAlertMessage(
         $"Suggested Fix Actions:\n{fixBlock}";
 
     return message;
+}
+
+/// <summary>
+/// Formats UTC timestamp in a human-readable date/time style.
+/// </summary>
+static string FormatReadableDateTime(DateTimeOffset timestampUtc)
+{
+    return timestampUtc.UtcDateTime.ToString("dd/MMM/yyyy : hh:mm:ss tt", CultureInfo.InvariantCulture);
 }
 
 /// <summary>
