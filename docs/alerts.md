@@ -53,7 +53,7 @@ Risk score is additive and capped at `100`:
 
 Each alert message includes:
 
-- Generated timestamp (UTC)
+- Generated timestamp (UTC, `dd/MMM/yyyy : hh:mm:ss tt`)
 - Risk score
 - Severity summary
 - Cooldown suppression summary
@@ -63,8 +63,11 @@ Each alert message includes:
 - Suggested fix actions
 - Optional AI suggestions
 
+If AI suggestions fail, the payload appends a fallback line:
+
+- `AI Suggestions: unavailable (<error>)`
+
 ## Known Alerting Notes
 
 - `ServiceRules` SSH detection uses Linux-style names (`ssh.service`, `sshd.service`).
 - Windows deployments may require adapting service-name checks for `SSH_SERVICE_MISSING`.
-

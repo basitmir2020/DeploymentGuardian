@@ -21,6 +21,13 @@ Notification credentials use dedicated environment variables (not `GUARDIAN_`):
 - `WEBHOOK_AUTH_VALUE`
 - `OPENAI_API_KEY`
 
+AI toggles and model/base-url settings still use `GUARDIAN_` prefix, for example:
+
+- `GUARDIAN_EnableOpenAiSuggestions=true`
+- `GUARDIAN_EnableOllamaSuggestions=true`
+- `GUARDIAN_OllamaBaseUrl=http://localhost:11434`
+- `GUARDIAN_OllamaModel=llama3.2`
+
 ## CLI Arguments
 
 - `--once`
@@ -103,6 +110,13 @@ Webhook payload shape:
 - Ollama requires:
   - `OllamaBaseUrl` (for example `http://localhost:11434`)
   - `OllamaModel` (for example `llama3.2`)
+
+## Alert Timestamp Format
+
+Alert messages print timestamp in UTC using:
+
+- `dd/MMM/yyyy : hh:mm:ss tt`
+- Example: `23/May/2026 : 07:40:11 PM`
 
 ## Example `guardian.json`
 

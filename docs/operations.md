@@ -40,6 +40,8 @@ Alert history is JSONL, one cycle per line.
 - Log scopes include:
   - `runId` for full process lifetime
   - `cycle` for each monitoring cycle
+- Alert messages use readable UTC time:
+  - `dd/MMM/yyyy : hh:mm:ss tt`
 - Typical healthy cycles log either:
   - `No alerts.`
   - or sent alert count with risk score.
@@ -60,6 +62,21 @@ Check:
 If no channels are configured, app logs:
 
 - `Alerts detected but no notification channel is configured.`
+
+### AI suggestions are not shown
+
+Check:
+
+- Exactly one provider is enabled:
+  - `EnableOpenAiSuggestions=true` OR
+  - `EnableOllamaSuggestions=true`
+- OpenAI path:
+  - `OPENAI_API_KEY` exists
+- Ollama path:
+  - Ollama server reachable at `OllamaBaseUrl`
+  - model exists (`ollama pull <model>`)
+
+If both providers are enabled, startup validation fails.
 
 ### App exits immediately
 
@@ -94,4 +111,3 @@ If no channels are configured, app logs:
 - Backup/rotate history and memory logs in long-running environments.
 - Keep notification secrets in protected env files.
 - Validate changes using `--once` before enabling interval mode.
-

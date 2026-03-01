@@ -12,7 +12,7 @@
 6. Memory trend detector can add a memory leak trend alert.
 7. Risk score is calculated.
 8. Alerts are cooldown-filtered (dedup).
-9. Detailed message is generated (evidence + fix actions).
+9. Detailed message is generated (human-readable UTC timestamp, evidence, fix actions).
 10. Optional AI guidance is appended (OpenAI or Ollama).
 11. Message is sent through configured notifier(s).
 12. Delivery state and history are persisted.
@@ -60,6 +60,16 @@
 - Output:
   - `DeploymentReport` with `Alerts` and `RiskScore`.
   - Detailed outbound message payload.
+  - Timestamp format in alert payload:
+    - `Generated At (UTC): dd/MMM/yyyy : hh:mm:ss tt`
+
+## AI Advisor Pipeline
+
+- `IAiAdvisor` is the shared abstraction used by alert message enrichment.
+- `BuildAiAdvisor(...)` in `Program.cs` selects provider:
+  - OpenAI when `EnableOpenAiSuggestions=true`
+  - Ollama when `EnableOllamaSuggestions=true`
+- Validation enforces mutual exclusivity so both providers cannot be enabled simultaneously.
 
 ## Notification Pipeline
 

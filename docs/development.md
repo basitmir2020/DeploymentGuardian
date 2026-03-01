@@ -70,6 +70,14 @@ dotnet test DeploymentGuardian.Tests/DeploymentGuardian.Tests.csproj
 - Wrap it with `RetryingNotifier` in `BuildNotifier`.
 - Add to multi-channel list so it can fan-out with existing channels.
 
+## AI Advisor Extension Pattern
+
+- Implement `IAiAdvisor` in `Abstractions/`.
+- Add provider class in `Modules/` (for example `OpenAiAdvisor`, `OllamaAdvisor`).
+- Wire selection logic in `BuildAiAdvisor(...)` in `Program.cs`.
+- Keep provider validation explicit in `ValidateOptions(...)`.
+- Keep summary contract compatible with `BuildAdvisorSummary(...)`.
+
 ## Coding Expectations
 
 - Keep behavior resilient: collectors should fail soft, not crash full cycle.
@@ -79,4 +87,5 @@ dotnet test DeploymentGuardian.Tests/DeploymentGuardian.Tests.csproj
   - parser logic
   - dedup behavior
   - notifier behavior
+  - AI provider selection/validation behavior
   - any new rule threshold logic

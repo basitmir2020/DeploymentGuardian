@@ -31,6 +31,7 @@ Deployment Guardian is a .NET 10 monitoring and alerting app for Linux and Windo
 - Persists cycle history in JSONL for post-incident analysis.
 - Builds detailed alert messages with:
   - Severity counts
+  - Human-readable UTC timestamp (`dd/MMM/yyyy : hh:mm:ss tt`)
   - System snapshot
   - Top process snapshot
   - Per-alert evidence
@@ -38,6 +39,7 @@ Deployment Guardian is a .NET 10 monitoring and alerting app for Linux and Windo
 - Optionally appends AI suggestions from:
   - OpenAI (`EnableOpenAiSuggestions=true` + `OPENAI_API_KEY`)
   - Ollama local models (`EnableOllamaSuggestions=true` + `OllamaBaseUrl` + `OllamaModel`)
+  - Exactly one AI provider can be enabled at a time
 - Sends notifications to:
   - Telegram
   - Webhook

@@ -76,6 +76,8 @@ Notes:
   - `GUARDIAN_EnableOpenAiSuggestions=true` for OpenAI.
   - `GUARDIAN_EnableOllamaSuggestions=true` for local Ollama.
   - Do not enable both at the same time.
+- Alert timestamps are sent in UTC readable format:
+  - `dd/MMM/yyyy : hh:mm:ss tt`
 
 ## 5) Configure app settings (optional)
 
@@ -99,6 +101,12 @@ Important fields:
 - `EnableOllamaSuggestions`: enable local Ollama-based AI suggestions.
 - `OllamaBaseUrl`: Ollama endpoint (default `http://localhost:11434`).
 - `OllamaModel`: local model name to use for suggestions.
+
+If you use Ollama, ensure the model is available on the host:
+
+```bash
+ollama pull llama3.2
+```
 
 Latest `guardian.json` template:
 
