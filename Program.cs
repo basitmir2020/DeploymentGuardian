@@ -624,6 +624,12 @@ static IAiAdvisor? BuildAiAdvisor(GuardianOptions options)
         return new OllamaAdvisor(options.OllamaBaseUrl, options.OllamaModel);
     }
 
+    if (options.EnableLlamaCppSuggestions)
+    {
+        var llamaApiKey = Environment.GetEnvironmentVariable("LLAMACPP_API_KEY");
+        return new LlamaCppAdvisor(options.LlamaCppBaseUrl, options.LlamaCppModel, llamaApiKey);
+    }
+
     return null;
 }
 
@@ -683,6 +689,9 @@ static GuardianOptions LoadOptions(IConfiguration configuration)
         EnableOllamaSuggestions = GetBool(configuration, "EnableOllamaSuggestions", false),
         OllamaBaseUrl = GetString(configuration, "OllamaBaseUrl", "http://localhost:11434"),
         OllamaModel = GetString(configuration, "OllamaModel", "llama3.2"),
+        EnableLlamaCppSuggestions = GetBool(configuration, "EnableLlamaCppSuggestions", false),
+        LlamaCppBaseUrl = GetString(configuration, "LlamaCppBaseUrl", "http://localhost:8080"),
+        LlamaCppModel = GetString(configuration, "LlamaCppModel", "local-model"),
         CpuSpikeMultiplier = GetDouble(configuration, "CpuSpikeMultiplier", 1.5),
         DiskUsageWarningPercent = GetDouble(configuration, "DiskUsageWarningPercent", 85),
         RamUsageWarningPercent = GetDouble(configuration, "RamUsageWarningPercent", 85),
@@ -743,9 +752,25 @@ static void ValidateOptions(GuardianOptions options)
         errors.Add("WebhookUrl must be an absolute http/https URL.");
     }
 
-    if (options.EnableOpenAiSuggestions && options.EnableOllamaSuggestions)
+    var enabledAiProviders = 0;
+    if (options.EnableOpenAiSuggestions)
     {
-        errors.Add("EnableOpenAiSuggestions and EnableOllamaSuggestions cannot both be true.");
+        enabledAiProviders++;
+    }
+
+    if (options.EnableOllamaSuggestions)
+    {
+        enabledAiProviders++;
+    }
+
+    if (options.EnableLlamaCppSuggestions)
+    {
+        enabledAiProviders++;
+    }
+
+    if (enabledAiProviders > 1)
+    {
+        errors.Add("Only one AI provider can be enabled at a time: OpenAI, Ollama, or llama.cpp.");
     }
 
     if (options.EnableOpenAiSuggestions &&
@@ -764,6 +789,19 @@ static void ValidateOptions(GuardianOptions options)
         if (string.IsNullOrWhiteSpace(options.OllamaModel))
         {
             errors.Add("EnableOllamaSuggestions=true requires OllamaModel.");
+        }
+    }
+
+    if (options.EnableLlamaCppSuggestions)
+    {
+        if (!IsValidHttpUrl(options.LlamaCppBaseUrl))
+        {
+            errors.Add("EnableLlamaCppSuggestions=true requires a valid LlamaCppBaseUrl http/https URL.");
+        }
+
+        if (string.IsNullOrWhiteSpace(options.LlamaCppModel))
+        {
+            errors.Add("EnableLlamaCppSuggestions=true requires LlamaCppModel.");
         }
     }
 
@@ -812,6 +850,8 @@ static GuardianOptions NormalizeOptions(GuardianOptions options)
     options.WebhookUrl = options.WebhookUrl?.Trim() ?? string.Empty;
     options.OllamaBaseUrl = options.OllamaBaseUrl?.Trim() ?? "http://localhost:11434";
     options.OllamaModel = options.OllamaModel?.Trim() ?? "llama3.2";
+    options.LlamaCppBaseUrl = options.LlamaCppBaseUrl?.Trim() ?? "http://localhost:8080";
+    options.LlamaCppModel = options.LlamaCppModel?.Trim() ?? "local-model";
 
     if (string.IsNullOrWhiteSpace(options.WebhookAuthHeader))
     {
@@ -830,6 +870,16 @@ static GuardianOptions NormalizeOptions(GuardianOptions options)
     if (string.IsNullOrWhiteSpace(options.OllamaModel))
     {
         options.OllamaModel = "llama3.2";
+    }
+
+    if (string.IsNullOrWhiteSpace(options.LlamaCppBaseUrl))
+    {
+        options.LlamaCppBaseUrl = "http://localhost:8080";
+    }
+
+    if (string.IsNullOrWhiteSpace(options.LlamaCppModel))
+    {
+        options.LlamaCppModel = "local-model";
     }
 
     return options;

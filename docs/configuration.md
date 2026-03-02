@@ -20,6 +20,7 @@ Notification credentials use dedicated environment variables (not `GUARDIAN_`):
 - `WEBHOOK_AUTH_HEADER`
 - `WEBHOOK_AUTH_VALUE`
 - `OPENAI_API_KEY`
+- `LLAMACPP_API_KEY` (optional, only if your llama.cpp endpoint requires Bearer auth)
 
 AI toggles and model/base-url settings still use `GUARDIAN_` prefix, for example:
 
@@ -27,6 +28,9 @@ AI toggles and model/base-url settings still use `GUARDIAN_` prefix, for example
 - `GUARDIAN_EnableOllamaSuggestions=true`
 - `GUARDIAN_OllamaBaseUrl=http://localhost:11434`
 - `GUARDIAN_OllamaModel=llama3.2`
+- `GUARDIAN_EnableLlamaCppSuggestions=true`
+- `GUARDIAN_LlamaCppBaseUrl=http://localhost:8080`
+- `GUARDIAN_LlamaCppModel=local-model`
 
 ## CLI Arguments
 
@@ -47,9 +51,12 @@ If no CLI interval is provided, `ScanIntervalSeconds` is used.
 | `AlertHistoryMaxEntries` | `5000` | `1..200000` | Max retained history entries |
 | `WebhookUrl` | `""` | absolute `http/https` when set | Optional webhook endpoint |
 | `WebhookAuthHeader` | `Authorization` | optional | Header name for webhook auth |
-| `EnableOllamaSuggestions` | `false` | cannot be true with `EnableOpenAiSuggestions` | Enables local Ollama AI suggestions |
+| `EnableOllamaSuggestions` | `false` | only one AI provider can be enabled | Enables local Ollama AI suggestions |
 | `OllamaBaseUrl` | `http://localhost:11434` | absolute `http/https` when Ollama enabled | Ollama server URL |
 | `OllamaModel` | `llama3.2` | required when Ollama enabled | Ollama model name |
+| `EnableLlamaCppSuggestions` | `false` | only one AI provider can be enabled | Enables local llama.cpp AI suggestions |
+| `LlamaCppBaseUrl` | `http://localhost:8080` | absolute `http/https` when llama.cpp enabled | llama.cpp server URL |
+| `LlamaCppModel` | `local-model` | required when llama.cpp enabled | Model value passed to `/v1/chat/completions` |
 | `CpuSpikeMultiplier` | `1.5` | `1..10` | CPU load vs cores critical multiplier |
 | `DiskUsageWarningPercent` | `85` | `1..100` | Disk warning threshold |
 | `RamUsageWarningPercent` | `85` | `1..100` | RAM warning threshold |
@@ -105,11 +112,16 @@ Webhook payload shape:
 
 - `EnableOpenAiSuggestions=true` uses `OpenAiAdvisor`.
 - `EnableOllamaSuggestions=true` uses `OllamaAdvisor`.
-- You cannot enable both providers at the same time.
+- `EnableLlamaCppSuggestions=true` uses `LlamaCppAdvisor`.
+- You can enable only one provider at the same time.
 - OpenAI requires `OPENAI_API_KEY`.
 - Ollama requires:
   - `OllamaBaseUrl` (for example `http://localhost:11434`)
   - `OllamaModel` (for example `llama3.2`)
+- llama.cpp requires:
+  - `LlamaCppBaseUrl` (for example `http://localhost:8080`)
+  - `LlamaCppModel` (for example `local-model`)
+  - optional `LLAMACPP_API_KEY` when endpoint auth is enabled
 
 ## Alert Timestamp Format
 
@@ -131,6 +143,9 @@ Alert messages print timestamp in UTC using:
   "EnableOllamaSuggestions": false,
   "OllamaBaseUrl": "http://localhost:11434",
   "OllamaModel": "llama3.2",
+  "EnableLlamaCppSuggestions": false,
+  "LlamaCppBaseUrl": "http://localhost:8080",
+  "LlamaCppModel": "local-model",
   "CpuSpikeMultiplier": 1.5,
   "DiskUsageWarningPercent": 85,
   "RamUsageWarningPercent": 85,

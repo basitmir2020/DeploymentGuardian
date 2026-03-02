@@ -39,6 +39,7 @@ Deployment Guardian is a .NET 10 monitoring and alerting app for Linux and Windo
 - Optionally appends AI suggestions from:
   - OpenAI (`EnableOpenAiSuggestions=true` + `OPENAI_API_KEY`)
   - Ollama local models (`EnableOllamaSuggestions=true` + `OllamaBaseUrl` + `OllamaModel`)
+  - llama.cpp local server (`EnableLlamaCppSuggestions=true` + `LlamaCppBaseUrl` + `LlamaCppModel`)
   - Exactly one AI provider can be enabled at a time
 - Sends notifications to:
   - Telegram

@@ -69,14 +69,19 @@ Check:
 
 - Exactly one provider is enabled:
   - `EnableOpenAiSuggestions=true` OR
-  - `EnableOllamaSuggestions=true`
+  - `EnableOllamaSuggestions=true` OR
+  - `EnableLlamaCppSuggestions=true`
 - OpenAI path:
   - `OPENAI_API_KEY` exists
 - Ollama path:
   - Ollama server reachable at `OllamaBaseUrl`
   - model exists (`ollama pull <model>`)
+- llama.cpp path:
+  - `llama-server` reachable at `LlamaCppBaseUrl`
+  - model is loaded via `-m <model.gguf>`
+  - if protected, `LLAMACPP_API_KEY` is set for the app
 
-If both providers are enabled, startup validation fails.
+If more than one provider is enabled, startup validation fails.
 
 ### App exits immediately
 

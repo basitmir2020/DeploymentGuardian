@@ -11,6 +11,9 @@ public class GuardianOptions
     public bool EnableOllamaSuggestions { get; set; }
     public string OllamaBaseUrl { get; set; } = "http://localhost:11434";
     public string OllamaModel { get; set; } = "llama3.2";
+    public bool EnableLlamaCppSuggestions { get; set; }
+    public string LlamaCppBaseUrl { get; set; } = "http://localhost:8080";
+    public string LlamaCppModel { get; set; } = "local-model";
     public double CpuSpikeMultiplier { get; set; } = 1.5;
     public double DiskUsageWarningPercent { get; set; } = 85;
     public double RamUsageWarningPercent { get; set; } = 85;

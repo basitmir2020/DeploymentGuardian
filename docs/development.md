@@ -9,6 +9,7 @@
   - Webhook endpoint for integration tests
   - `OPENAI_API_KEY` for AI suggestion path
   - Ollama server + pulled model for local AI suggestion path
+  - llama.cpp `llama-server` endpoint + loaded model for local AI suggestion path
 
 ## Build And Test
 
@@ -73,7 +74,7 @@ dotnet test DeploymentGuardian.Tests/DeploymentGuardian.Tests.csproj
 ## AI Advisor Extension Pattern
 
 - Implement `IAiAdvisor` in `Abstractions/`.
-- Add provider class in `Modules/` (for example `OpenAiAdvisor`, `OllamaAdvisor`).
+- Add provider class in `Modules/` (for example `OpenAiAdvisor`, `OllamaAdvisor`, `LlamaCppAdvisor`).
 - Wire selection logic in `BuildAiAdvisor(...)` in `Program.cs`.
 - Keep provider validation explicit in `ValidateOptions(...)`.
 - Keep summary contract compatible with `BuildAdvisorSummary(...)`.

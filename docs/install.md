@@ -65,6 +65,12 @@ OPENAI_API_KEY=
 GUARDIAN_EnableOllamaSuggestions=false
 GUARDIAN_OllamaBaseUrl=http://localhost:11434
 GUARDIAN_OllamaModel=llama3.2
+
+# Optional llama.cpp local-model provider:
+GUARDIAN_EnableLlamaCppSuggestions=false
+GUARDIAN_LlamaCppBaseUrl=http://localhost:8080
+GUARDIAN_LlamaCppModel=local-model
+LLAMACPP_API_KEY=
 EOF
 sudo chmod 600 /etc/deployment-guardian.env
 ```
@@ -75,7 +81,8 @@ Notes:
 - AI provider flags are mutually exclusive:
   - `GUARDIAN_EnableOpenAiSuggestions=true` for OpenAI.
   - `GUARDIAN_EnableOllamaSuggestions=true` for local Ollama.
-  - Do not enable both at the same time.
+  - `GUARDIAN_EnableLlamaCppSuggestions=true` for local llama.cpp.
+  - Enable only one provider at a time.
 - Alert timestamps are sent in UTC readable format:
   - `dd/MMM/yyyy : hh:mm:ss tt`
 
@@ -101,12 +108,39 @@ Important fields:
 - `EnableOllamaSuggestions`: enable local Ollama-based AI suggestions.
 - `OllamaBaseUrl`: Ollama endpoint (default `http://localhost:11434`).
 - `OllamaModel`: local model name to use for suggestions.
+- `EnableLlamaCppSuggestions`: enable local llama.cpp-based AI suggestions.
+- `LlamaCppBaseUrl`: llama.cpp endpoint (default `http://localhost:8080`).
+- `LlamaCppModel`: model name sent to llama.cpp OpenAI-compatible API.
 
 If you use Ollama, ensure the model is available on the host:
 
 ```bash
 ollama pull llama3.2
 ```
+
+If you use llama.cpp, run `llama-server` on the host and keep it reachable:
+
+```bash
+mkdir -p /opt/llama.cpp
+cd /opt/llama.cpp
+git clone https://github.com/ggerganov/llama.cpp.git
+cd llama.cpp
+cmake -B build
+cmake --build build --config Release -j
+./build/bin/llama-server \
+  -m /opt/models/Qwen2.5-0.5B-Instruct-Q4_K_M.gguf \
+  --host 127.0.0.1 \
+  --port 8080 \
+  -c 1024 \
+  -t 2
+```
+
+Then set:
+
+- `GUARDIAN_EnableLlamaCppSuggestions=true`
+- `GUARDIAN_LlamaCppBaseUrl=http://127.0.0.1:8080`
+- `GUARDIAN_LlamaCppModel=local-model`
+- `LLAMACPP_API_KEY=<value>` only if your llama.cpp endpoint is auth-protected
 
 Latest `guardian.json` template:
 
@@ -121,6 +155,9 @@ Latest `guardian.json` template:
   "EnableOllamaSuggestions": false,
   "OllamaBaseUrl": "http://localhost:11434",
   "OllamaModel": "llama3.2",
+  "EnableLlamaCppSuggestions": false,
+  "LlamaCppBaseUrl": "http://localhost:8080",
+  "LlamaCppModel": "local-model",
   "CpuSpikeMultiplier": 1.5,
   "DiskUsageWarningPercent": 85,
   "RamUsageWarningPercent": 85,
