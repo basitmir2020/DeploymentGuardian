@@ -4,10 +4,11 @@
 
 - .NET SDK 10.0+
 - Linux or Windows host
+- Linux or Windows host
 - Optional:
   - Telegram bot credentials for alert delivery tests
   - Webhook endpoint for integration tests
-  - Ollama server + pulled `qwen2.5:0.5b` model for AI suggestions
+  - An AI provider setup (Ollama + `qwen2.5:0.5b`, an OpenAI API key, or a running llama.cpp server) for testing the local AI pipeline
 
 ## Build And Test
 
@@ -71,12 +72,9 @@ dotnet test DeploymentGuardian.Tests/DeploymentGuardian.Tests.csproj
 
 ## AI Advisor Extension Pattern
 
-- Implement `IAiAdvisor` in `Abstractions/`.
-- Keep Ollama integration in `BuildAiAdvisor(...)` in `Program.cs`.
-- Endpoint and timeout should come from dedicated env vars:
-  - `OLLAMA_BASE_URL`
-  - `OLLAMA_TIMEOUT_SECONDS`
-- Keep summary contract compatible with `BuildAdvisorSummary(...)`.
+- Implement `IAiAdvisor` in `Abstractions/`. This interface now requires implementations for all 5 alert phases: `GetSuggestionsAsync`, `GetImplementationStepsAsync`, `GetSecuritySuggestionsAsync`, `GetPerformanceTuningAsync`, and `GetSuggestionsStreamAsync`.
+- Define an instantiation strategy within the `BuildAiAdvisor(...)` factory method in `Program.cs`.
+- Endpoint and API key logic should use dedicated environment variables depending on the service (e.g. `OLLAMA_BASE_URL`, `OPENAI_API_KEY`).
 
 ## Coding Expectations
 
@@ -87,5 +85,5 @@ dotnet test DeploymentGuardian.Tests/DeploymentGuardian.Tests.csproj
   - parser logic
   - dedup behavior
   - notifier behavior
-  - AI suggestion behavior and timeout handling
+  - AI suggestion background handling and schema parsing
   - any new rule threshold logic

@@ -11,11 +11,13 @@ public class WindowsServerCollector : IServerDataCollector
     /// </summary>
     public ServerMetrics Analyze()
     {
+        var ram = ReadRamUsagePercent();
         return new ServerMetrics
         {
             CpuLoad = ReadCpuLoadPercent(),
             CpuCores = Environment.ProcessorCount,
-            RamUsagePercent = ReadRamUsagePercent(),
+            RamUsagePercent = ram.Percent,
+            RamTotalMb = ram.TotalMb,
             DiskUsagePercent = ReadSystemDiskUsagePercent(),
             SwapEnabled = IsPageFilePresent()
         };
@@ -50,17 +52,17 @@ public class WindowsServerCollector : IServerDataCollector
     }
 
     /// <summary>
-    /// Reads RAM usage percentage from Windows physical memory counters.
+    /// Reads RAM usage percentage and total MB from Windows physical memory counters.
     /// </summary>
-    private static double ReadRamUsagePercent()
+    private static (double Percent, double TotalMb) ReadRamUsagePercent()
     {
         if (!WindowsCollectorUtils.TryGetPhysicalMemoryBytes(out var total, out var free) || total <= 0)
         {
-            return 0;
+            return (0, 0);
         }
 
         var used = total - free;
-        return used / total * 100.0;
+        return (used / total * 100.0, total / 1024.0 / 1024.0);
     }
 
     /// <summary>

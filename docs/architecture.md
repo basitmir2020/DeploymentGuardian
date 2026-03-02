@@ -13,8 +13,8 @@
 7. Risk score is calculated.
 8. Alerts are cooldown-filtered (dedup).
 9. Detailed message is generated (human-readable UTC timestamp, evidence, fix actions).
-10. AI guidance is appended from local Ollama.
-11. Message is sent through configured notifier(s).
+10. Message is instantly sent through configured notifier(s).
+11. If AI is configured, a fire-and-forget background sequence starts: requests multi-phase Diagnostics, Implementation Steps, Security Analysis, and Performance Tuning individually from the LLM, and sends out follow-up messages on completion.
 12. Delivery state and history are persisted.
 
 ## Runtime Components
@@ -67,11 +67,10 @@
 ## AI Advisor Pipeline
 
 - `IAiAdvisor` is the shared abstraction used by alert message enrichment.
-- `BuildAiAdvisor(...)` in `Program.cs` always builds `OllamaAdvisor`.
-- Model is fixed to `qwen2.5:0.5b`.
-- Runtime endpoint and timeout come from env vars:
-  - `OLLAMA_BASE_URL`
-  - `OLLAMA_TIMEOUT_SECONDS`
+- Provides support for 5 distinct phases: Suggestions, Implementation Steps, Security Advice, and Performance Tuning.
+- Implementations exist for `OllamaAdvisor`, `OpenAIAdvisor`, and `LlamaCppAdvisor`.
+- Factory pattern in `Program.cs` (`BuildAiAdvisor`) selects the appropriate provider using the `AI_PROVIDER` environment variable.
+- Configuration comes from associated env vars (`AI_MODEL`, `OLLAMA_BASE_URL`, `OPENAI_API_KEY`, etc).
 
 ## Notification Pipeline
 

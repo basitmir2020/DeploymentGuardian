@@ -154,8 +154,8 @@ public class TelegramSetupAssistant
             return;
         }
 
-        await SendMessageAsync("Analyzing server and generating AI setup plan. Please wait...", cancellationToken);
-        var (plan, error) = await BuildPlanFromAiAsync(text, cancellationToken);
+        var statusMessageId = await SendMessageAsync("Analyzing server and generating AI setup plan. Please wait...", cancellationToken);
+        var (plan, error) = await BuildPlanFromAiAsync(text, statusMessageId, cancellationToken);
         if (plan is null)
         {
             await SendMessageAsync($"Could not generate setup plan.\nReason: {error}", cancellationToken);
@@ -168,6 +168,7 @@ public class TelegramSetupAssistant
 
     private async Task<(PendingSetupPlan? Plan, string Error)> BuildPlanFromAiAsync(
         string userRequest,
+        int? statusMessageId,
         CancellationToken cancellationToken)
     {
         if (_aiAdvisor is null)
@@ -178,15 +179,33 @@ public class TelegramSetupAssistant
         var snapshot = await Task.Run(BuildServerSnapshotForPrompt, cancellationToken);
         var prompt = BuildPlannerPrompt(userRequest, snapshot);
 
-        string aiResponse;
+        var sb = new StringBuilder();
+        var lastUpdate = DateTime.UtcNow;
+
         try
         {
-            aiResponse = await _aiAdvisor.GetSuggestionsAsync(prompt);
+            await foreach (var chunk in _aiAdvisor.GetSuggestionsStreamAsync(prompt, cancellationToken))
+            {
+                sb.Append(chunk);
+                
+                // Update status message every 1.5 seconds to show progress
+                if (statusMessageId.HasValue && (DateTime.UtcNow - lastUpdate).TotalSeconds > 1.5)
+                {
+                    var preview = sb.ToString();
+                    // Truncate if too long for preview
+                    if (preview.Length > 3500) preview = preview[..3500] + "...";
+                    
+                    await EditMessageAsync(statusMessageId.Value, $"Generating plan...\n\n```json\n{preview}\n```", cancellationToken);
+                    lastUpdate = DateTime.UtcNow;
+                }
+            }
         }
         catch (Exception ex)
         {
             return (null, $"AI request failed ({ex.Message}).");
         }
+
+        var aiResponse = sb.ToString();
 
         if (!TryParseAiPlan(aiResponse, userRequest, out var parsed, out var parseError))
         {
@@ -408,6 +427,7 @@ public class TelegramSetupAssistant
             lines.Add(ReadProbe("WindowsVersion", "[System.Environment]::OSVersion.VersionString", 5000));
             lines.Add(ReadProbe("CurrentUser", "$env:USERNAME", 3000));
             lines.Add(ReadProbe("PackageManager", "if (Get-Command winget -ErrorAction SilentlyContinue) { 'winget' } else { 'none' }", 4000));
+            lines.Add(ReadProbe("Memory", "try{ $m=Get-CimInstance Win32_OperatingSystem -ErrorAction Stop; \\\"Total: $([math]::Round($m.TotalVisibleMemorySize / 1024)) MB, Free: $([math]::Round($m.FreePhysicalMemory / 1024)) MB\\\" }catch{ \\\"unknown\\\" }", 5000));
         }
 
         var snapshot = string.Join("\n", lines);
@@ -417,10 +437,17 @@ public class TelegramSetupAssistant
     private static string BuildPlannerPrompt(string userRequest, string serverSnapshot)
     {
         return
-            "You are a senior DevOps setup planner. Return ONLY valid JSON with this schema: " +
-            "{\"technology\":\"string\",\"summary\":\"string\",\"prerequisites\":[{\"name\":\"string\",\"required\":true,\"status\":\"installed|missing|unknown\",\"evidence\":\"string\"}],\"steps\":[{\"title\":\"string\",\"command\":\"single-line shell command\",\"required\":true}],\"notes\":[\"string\"]}. " +
-            "Use detected package manager. Keep max 12 steps. Avoid destructive commands. If already installed, avoid reinstalling. " +
-            $"User request:\n{userRequest}\n\nServer snapshot:\n{serverSnapshot}";
+            "You are a DevOps expert. Create a deployment plan.\n" +
+            "Return ONLY valid JSON. No markdown blocks.\n" +
+            "Schema: {\"technology\":\"string\",\"prerequisites\":[{\"name\":\"string\",\"required\":true,\"status\":\"installed|missing\"}],\"steps\":[{\"title\":\"string\",\"command\":\"shell_command\",\"required\":true}]}\n" +
+            "Rules:\n" +
+            "1. Use detected package manager.\n" +
+            "2. Commands must be non-interactive.\n" +
+            "3. Skip installed tools.\n" +
+            "4. No destructive commands.\n" +
+            "5. Ensure recommended stack fits strictly within the system's available CPU and Memory constraints provided in the Snapshot.\n" +
+            $"Request: {userRequest}\n" +
+            $"Snapshot:\n{serverSnapshot}";
     }
 
     private static bool TryParseAiPlan(string response, string userRequest, out ParsedAiPlan plan, out string error)
@@ -572,7 +599,36 @@ public class TelegramSetupAssistant
         return updates;
     }
 
-    private async Task SendMessageAsync(string message, CancellationToken cancellationToken)
+    private async Task<int?> SendMessageAsync(string message, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return null;
+        }
+
+        var safe = message.Length > 3900 ? message[..3875] + "\n\n[Message truncated]" : message;
+        using var response = await HttpClient.PostAsync(
+            $"https://api.telegram.org/bot{_token}/sendMessage",
+            new FormUrlEncodedContent([
+                new KeyValuePair<string, string>("chat_id", _chatId),
+                new KeyValuePair<string, string>("text", safe),
+                new KeyValuePair<string, string>("parse_mode", "Markdown")
+            ]),
+            cancellationToken);
+
+        response.EnsureSuccessStatusCode();
+        
+        var payload = await response.Content.ReadAsStringAsync();
+        using var doc = JsonDocument.Parse(payload);
+        if (doc.RootElement.TryGetProperty("result", out var result) && 
+            result.TryGetProperty("message_id", out var id))
+        {
+            return id.GetInt32();
+        }
+        return null;
+    }
+
+    private async Task EditMessageAsync(int messageId, string message, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(message))
         {
@@ -581,14 +637,16 @@ public class TelegramSetupAssistant
 
         var safe = message.Length > 3900 ? message[..3875] + "\n\n[Message truncated]" : message;
         using var response = await HttpClient.PostAsync(
-            $"https://api.telegram.org/bot{_token}/sendMessage",
+            $"https://api.telegram.org/bot{_token}/editMessageText",
             new FormUrlEncodedContent([
                 new KeyValuePair<string, string>("chat_id", _chatId),
-                new KeyValuePair<string, string>("text", safe)
+                new KeyValuePair<string, string>("message_id", messageId.ToString(CultureInfo.InvariantCulture)),
+                new KeyValuePair<string, string>("text", safe),
+                new KeyValuePair<string, string>("parse_mode", "Markdown")
             ]),
             cancellationToken);
 
-        response.EnsureSuccessStatusCode();
+        // We don't throw on edit failure because it might be due to "message is not modified" which is fine
     }
 
     private string BuildExecutionCommand(string command)

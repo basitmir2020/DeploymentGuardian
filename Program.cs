@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using DeploymentGuardian.Abstractions;
 using DeploymentGuardian.Models;
 using DeploymentGuardian.Modules;
@@ -284,13 +285,10 @@ static async Task ExecuteCycleAsync(
         };
 
         var message = BuildAlertMessage(sendableReport, suppressedCount, nowUtc, context, appProfile);
-        message = await AppendAiSuggestionsAsync(
-            message,
-            aiAdvisor,
-            sendableReport,
-            context,
-            appProfile,
-            cancellationToken);
+        if (aiAdvisor is not null)
+        {
+            message += "\n\n🤖 AI Analysis in progress... Please wait for suggestions.";
+        }
         message = TrimForTelegram(message, 3900);
 
         if (notifier is null)
@@ -303,6 +301,18 @@ static async Task ExecuteCycleAsync(
 
         cancellationToken.ThrowIfCancellationRequested();
         await notifier.SendAsync(message);
+
+        if (aiAdvisor is not null)
+        {
+            DispatchAiFollowUpBackground(
+                notifier,
+                aiAdvisor,
+                sendableReport,
+                context,
+                appProfile,
+                logger);
+        }
+
         alertDeduplicator.MarkSent(sendableReport.Alerts, nowUtc);
         sentAlerts = sendableReport.Alerts.Count;
         historyStore.Append(BuildHistoryEntry(
@@ -556,38 +566,69 @@ static string TrimForTelegram(string message, int maxLength)
 }
 
 /// <summary>
-/// Adds AI suggestions to the alert message when advisor is enabled and available.
+/// Dispatches a background, fire-and-forget AI analysis task.
+/// This prevents slow LLM processing from stalling the main server monitoring cycle.
 /// </summary>
-static async Task<string> AppendAiSuggestionsAsync(
-    string message,
-    IAiAdvisor? aiAdvisor,
+static void DispatchAiFollowUpBackground(
+    INotifier notifier,
+    IAiAdvisor aiAdvisor,
     DeploymentReport report,
     ServerContext context,
     AppAnalysisResult appProfile,
-    CancellationToken cancellationToken)
+    ILogger logger)
 {
-    if (aiAdvisor is null)
+    _ = Task.Run(async () =>
     {
-        return message;
-    }
-
-    try
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        var summary = BuildAdvisorSummary(report, context, appProfile);
-        var suggestions = await aiAdvisor.GetSuggestionsAsync(summary);
-
-        if (string.IsNullOrWhiteSpace(suggestions))
+        try
         {
-            return message;
-        }
+            // Phase 2: Diagnostics & Suggestions
+            var summary = BuildAdvisorSummary(report, context, appProfile);
+            var suggestions = await aiAdvisor.GetSuggestionsAsync(summary);
+            if (!string.IsNullOrWhiteSpace(suggestions))
+            {
+                await notifier.SendAsync($"🤖 AI Diagnostics & Suggestions:\n{suggestions.Trim()}");
 
-        return $"{message}\n\nAI Suggestions:\n{suggestions.Trim()}";
-    }
-    catch (Exception ex)
-    {
-        return $"{message}\n\nAI Suggestions: unavailable ({ex.Message})";
-    }
+                // Phase 3: Implementation Steps
+                var implSteps = await aiAdvisor.GetImplementationStepsAsync(suggestions);
+                if (!string.IsNullOrWhiteSpace(implSteps))
+                {
+                    await notifier.SendAsync($"🛠️ AI Implementation Steps:\n{implSteps.Trim()}");
+                }
+            }
+
+            // Phase 4: Security Audit
+            var securitySummary = BuildSecuritySummary(context.Security);
+            var securityAdvice = await aiAdvisor.GetSecuritySuggestionsAsync(securitySummary);
+            if (!string.IsNullOrWhiteSpace(securityAdvice))
+            {
+                await notifier.SendAsync($"🔒 AI Security Audit:\n{securityAdvice.Trim()}");
+            }
+
+            // Phase 5: Performance Tuning
+            var metricsSummary = $"CPU Cores: {context.Metrics.CpuCores}, Total RAM: {context.Metrics.RamTotalMb} MB, CPU Load: {context.Metrics.CpuLoad}%, RAM Usage: {context.Metrics.RamUsagePercent}%";
+            var perfAdvice = await aiAdvisor.GetPerformanceTuningAsync(metricsSummary);
+            if (!string.IsNullOrWhiteSpace(perfAdvice))
+            {
+                await notifier.SendAsync($"🚀 AI Performance Tuning:\n{perfAdvice.Trim()}");
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Background AI multi-phase task failed.");
+        }
+    });
+}
+
+static string BuildSecuritySummary(SecurityReport report)
+{
+    var sb = new StringBuilder();
+    sb.AppendLine("Server Security Context:");
+    sb.AppendLine($"- Firewall Enabled: {report.FirewallEnabled}");
+    sb.AppendLine($"- Root Login Disabled: {report.RootLoginDisabled}");
+    sb.AppendLine($"- Password Auth Disabled: {report.PasswordAuthDisabled}");
+    sb.AppendLine($"- Fail2Ban Installed: {report.Fail2BanInstalled}");
+    sb.AppendLine($"- Open TCP Ports: {(report.OpenPorts.Any() ? string.Join(", ", report.OpenPorts) : "None detected")}");
+    return sb.ToString();
 }
 
 /// <summary>
@@ -611,6 +652,7 @@ static string BuildAdvisorSummary(
         $"ExpectedConcurrentUsers: {appProfile.ExpectedConcurrentUsers}\n" +
         $"CPU_Load: {context.Metrics.CpuLoad:F2}\n" +
         $"CPU_Cores: {context.Metrics.CpuCores}\n" +
+        $"RAM_Total_MB: {context.Metrics.RamTotalMb:F0}\n" +
         $"RAM_Usage_Percent: {context.Metrics.RamUsagePercent:F1}\n" +
         $"Disk_Usage_Percent: {context.Metrics.DiskUsagePercent:F1}\n" +
         $"OpenPortsCount: {context.Security.OpenPorts.Count}\n" +
@@ -618,7 +660,7 @@ static string BuildAdvisorSummary(
         $"PasswordAuthDisabled: {context.Security.PasswordAuthDisabled}\n" +
         $"Alerts:\n{alertLines}\n" +
         $"TopProcesses:\n{processLines}\n" +
-        "Provide concise action items prioritized by impact and urgency.";
+        "Provide concise action items prioritized by impact and urgency. Ensure recommendations fit strictly within the server's CPU Cores and RAM Total MB limits.";
 }
 
 /// <summary>
@@ -654,34 +696,62 @@ static AlertHistoryEntry BuildHistoryEntry(
 }
 
 /// <summary>
-/// Creates Ollama AI advisor from dedicated environment variables.
+/// Creates an AI advisor based on environment configuration.
 /// </summary>
-static IAiAdvisor BuildAiAdvisor()
+static IAiAdvisor? BuildAiAdvisor()
 {
-    const string model = "qwen2.5:0.5b";
-    var ollamaBaseUrl = FirstNonEmpty(
-        Environment.GetEnvironmentVariable("OLLAMA_BASE_URL"),
-        "http://127.0.0.1:11434");
-    var timeoutRaw = Environment.GetEnvironmentVariable("OLLAMA_TIMEOUT_SECONDS");
-    var timeoutSeconds = 120;
+    var provider = FirstNonEmpty(Environment.GetEnvironmentVariable("AI_PROVIDER"), "ollama").ToLowerInvariant();
+    var model = FirstNonEmpty(Environment.GetEnvironmentVariable("AI_MODEL"), "qwen2.5:0.5b");
 
-    if (!string.IsNullOrWhiteSpace(timeoutRaw) &&
-        !int.TryParse(timeoutRaw, out timeoutSeconds))
+    if (provider == "none")
     {
-        throw new InvalidOperationException("OLLAMA_TIMEOUT_SECONDS must be an integer.");
+        return null;
     }
 
-    if (!IsValidHttpUrl(ollamaBaseUrl))
+    if (provider == "openai")
     {
-        throw new InvalidOperationException("OLLAMA_BASE_URL must be an absolute http/https URL.");
+        return new OpenAiAdvisor();
     }
 
-    if (timeoutSeconds < 5 || timeoutSeconds > 600)
+    if (provider == "llamacpp")
     {
-        throw new InvalidOperationException("OLLAMA_TIMEOUT_SECONDS must be between 5 and 600.");
+        var baseUrl = Environment.GetEnvironmentVariable("LLAMACPP_BASE_URL");
+        if (string.IsNullOrWhiteSpace(baseUrl) || !IsValidHttpUrl(baseUrl))
+        {
+            throw new InvalidOperationException("LLAMACPP_BASE_URL must be a valid absolute http/https URL when using llamacpp provider.");
+        }
+        var apiKey = Environment.GetEnvironmentVariable("LLAMACPP_API_KEY");
+        return new LlamaCppAdvisor(baseUrl, model, apiKey);
     }
 
-    return new OllamaAdvisor(ollamaBaseUrl, model, timeoutSeconds);
+    if (provider == "ollama")
+    {
+        var ollamaBaseUrl = FirstNonEmpty(
+            Environment.GetEnvironmentVariable("OLLAMA_BASE_URL"),
+            "http://127.0.0.1:11434");
+        var timeoutRaw = Environment.GetEnvironmentVariable("OLLAMA_TIMEOUT_SECONDS");
+        var timeoutSeconds = 120;
+
+        if (!string.IsNullOrWhiteSpace(timeoutRaw) &&
+            !int.TryParse(timeoutRaw, out timeoutSeconds))
+        {
+            throw new InvalidOperationException("OLLAMA_TIMEOUT_SECONDS must be an integer.");
+        }
+
+        if (!IsValidHttpUrl(ollamaBaseUrl))
+        {
+            throw new InvalidOperationException("OLLAMA_BASE_URL must be an absolute http/https URL.");
+        }
+
+        if (timeoutSeconds < 5 || timeoutSeconds > 600)
+        {
+            throw new InvalidOperationException("OLLAMA_TIMEOUT_SECONDS must be between 5 and 600.");
+        }
+
+        return new OllamaAdvisor(ollamaBaseUrl, model, timeoutSeconds);
+    }
+
+    throw new InvalidOperationException($"Unknown AI_PROVIDER: {provider}. Supported values are: ollama, openai, llamacpp, none.");
 }
 
 /// <summary>

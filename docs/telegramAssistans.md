@@ -36,7 +36,7 @@ Supported control messages:
 - If app runs with `--once` or `ScanIntervalSeconds = 0`, assistant does not run.
 - Automated setup execution is Linux-only in current implementation.
 - Outbound Telegram alerts and inbound assistant use the same bot token/chat id.
-- Plan generation uses the configured AI advisor (current project default: Ollama).
+- Plan generation uses the configured AI provider via the `AI_PROVIDER` environment variable (e.g. `ollama`, `openai`, `llamacpp`).
 
 ## Step 1: Create Bot (Or Reuse Existing)
 
@@ -240,8 +240,8 @@ Check:
 
 Check:
 
-- AI backend is healthy (for Ollama: service running, model present).
-- AI response is not timing out.
+- AI backend is healthy (for Ollama: service running, model present, or OpenAI API key is valid).
+- AI response is not timing out. Ensure you are using the optimized small-schema setup, which aggressively reduces required output tokens.
 - Retry with clearer technology details in one message.
 
 ### Step 2/3 runs even after required step fails

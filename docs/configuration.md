@@ -23,8 +23,13 @@ Dedicated environment variables (not `GUARDIAN_`) are used for notifications and
 - `WEBHOOK_URL`
 - `WEBHOOK_AUTH_HEADER`
 - `WEBHOOK_AUTH_VALUE`
+- `WEBHOOK_AUTH_VALUE`
+- `AI_PROVIDER` (optional, default `none`, valid options `ollama`, `openai`, `llamacpp`, `none`)
+- `AI_MODEL` (optional, default `qwen2.5:0.5b` for ollama/llamacpp, `gpt-4o-mini` for openai)
 - `OLLAMA_BASE_URL` (optional, default `http://127.0.0.1:11434`)
 - `OLLAMA_TIMEOUT_SECONDS` (optional, default `120`, valid `5..600`)
+- `LLAMACPP_BASE_URL` (optional, default `http://127.0.0.1:8080`)
+- `OPENAI_API_KEY` (required if provider is `openai`)
 
 ## CLI Arguments
 
@@ -118,11 +123,19 @@ Webhook payload shape:
 
 ## AI Behavior
 
-- AI provider is Ollama only.
-- Model is fixed in code to: `qwen2.5:0.5b`.
-- Runtime values are read from dedicated env vars:
+- AI provider can be configured via `AI_PROVIDER` environment variable (`ollama`, `openai`, `llamacpp`, default `none`).
+- AI model can be fixed using `AI_MODEL`.
+- Once configured, AI alerts run in a decoupled 5-phase background pipeline:
+  1. Instant Health Alert
+  2. Diagnostics & Suggestions
+  3. Actionable Implementation Steps
+  4. Server-Specific Security Audit
+  5. Hardware Performance Tuning
+- Runtime values are read from dedicated env vars depending on the provider:
   - `OLLAMA_BASE_URL` (default `http://127.0.0.1:11434`)
   - `OLLAMA_TIMEOUT_SECONDS` (default `120`)
+  - `LLAMACPP_BASE_URL` (default `http://127.0.0.1:8080`)
+  - `OPENAI_API_KEY`
 
 ## Alert Timestamp Format
 

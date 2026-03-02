@@ -22,12 +22,14 @@ public class ServerAnalyzer : IServerDataCollector
     public ServerMetrics Analyze()
     {
         var swapResult = _shell.RunCommand("swapon --show");
+        var ram = GetRamUsage();
 
         return new ServerMetrics
         {
             CpuLoad = GetCpuLoad(),
             CpuCores = GetCpuCores(),
-            RamUsagePercent = GetRamUsage(),
+            RamUsagePercent = ram.Percent,
+            RamTotalMb = ram.TotalMb,
             DiskUsagePercent = GetDiskUsage(),
             SwapEnabled = swapResult.Succeeded && !string.IsNullOrWhiteSpace(swapResult.StdOut)
         };
@@ -68,20 +70,20 @@ public class ServerAnalyzer : IServerDataCollector
     }
 
     /// <summary>
-    /// Computes RAM utilization percentage from free command output.
+    /// Computes RAM utilization percentage and total MB from free command output.
     /// </summary>
-    private double GetRamUsage()
+    private (double Percent, double TotalMb) GetRamUsage()
     {
         var result = _shell.RunCommand("free -m");
         if (!result.Succeeded)
         {
-            return 0;
+            return (0, 0);
         }
 
         var line = result.StdOut.Split('\n').FirstOrDefault(l => l.StartsWith("Mem:", StringComparison.Ordinal));
         if (line is null)
         {
-            return 0;
+            return (0, 0);
         }
 
         var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
@@ -90,10 +92,10 @@ public class ServerAnalyzer : IServerDataCollector
             !TryParseDouble(parts[2], out var used) ||
             total <= 0)
         {
-            return 0;
+            return (0, 0);
         }
 
-        return (used / total) * 100;
+        return ((used / total) * 100, total);
     }
 
     /// <summary>
