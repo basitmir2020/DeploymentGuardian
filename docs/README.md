@@ -56,3 +56,4 @@ Deployment Guardian is a .NET 10 monitoring and alerting app for Linux and Windo
 - [Development Guide](./development.md)
 - [Install Guide](./install.md)
 - [Ollama qwen2.5:0.5b Setup](./ollama-qwen2.5-0.5b.md)
+- [Telegram Setup Assistant](./telegramAssistans.md)

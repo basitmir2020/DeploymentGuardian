@@ -85,10 +85,11 @@
 ## Telegram Setup Assistant Pipeline
 
 - Polls Telegram Bot API `getUpdates` in interval mode.
-- Accepts stack messages (Angular/React/Next.js/Blazor/ASP.NET Core/Vue/Node.js).
-- Builds server prerequisite status using platform-aware command probes.
-- Returns readiness report and waits for explicit `okay`.
-- Executes predefined setup commands only after confirmation.
+- Accepts free-form technology messages (not limited to predefined stacks).
+- Builds a server snapshot using platform-aware probes.
+- Sends request + snapshot to AI advisor and expects structured JSON plan.
+- Returns AI-generated readiness report and waits for explicit `okay`.
+- Executes AI-generated setup commands only after confirmation.
 - Supports `steps` (show commands) and `cancel` (discard plan).
 
 ## Persistence Files

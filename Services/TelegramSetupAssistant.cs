@@ -2,29 +2,35 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using DeploymentGuardian.Abstractions;
 using Microsoft.Extensions.Logging;
 
 namespace DeploymentGuardian.Services;
 
 public class TelegramSetupAssistant
 {
-    private static readonly HttpClient HttpClient = new()
-    {
-        Timeout = TimeSpan.FromSeconds(20)
-    };
+    private static readonly HttpClient HttpClient = new() { Timeout = TimeSpan.FromSeconds(20) };
+    private static readonly JsonSerializerOptions PlannerJsonOptions = new() { PropertyNameCaseInsensitive = true };
 
     private readonly string _token;
     private readonly string _chatId;
+    private readonly IAiAdvisor? _aiAdvisor;
     private readonly ILogger _logger;
     private readonly TimeSpan _pollInterval;
+    private readonly bool _useSudoForInstallCommands;
+    private readonly bool _stopOnRequiredFailure;
     private long _nextUpdateId;
     private bool _initialized;
     private PendingSetupPlan? _pendingPlan;
 
-    /// <summary>
-    /// Creates a Telegram setup assistant for stack-driven server provisioning requests.
-    /// </summary>
-    public TelegramSetupAssistant(string token, string chatId, ILogger logger, int pollIntervalSeconds = 5)
+    public TelegramSetupAssistant(
+        string token,
+        string chatId,
+        ILogger logger,
+        int pollIntervalSeconds = 5,
+        bool useSudoForInstallCommands = false,
+        bool stopOnRequiredFailure = true,
+        IAiAdvisor? aiAdvisor = null)
     {
         if (string.IsNullOrWhiteSpace(token))
         {
@@ -36,7 +42,7 @@ public class TelegramSetupAssistant
             throw new ArgumentException("Telegram chat id is required.", nameof(chatId));
         }
 
-        if (pollIntervalSeconds < 1 || pollIntervalSeconds > 60)
+        if (pollIntervalSeconds is < 1 or > 60)
         {
             throw new ArgumentOutOfRangeException(
                 nameof(pollIntervalSeconds),
@@ -47,11 +53,11 @@ public class TelegramSetupAssistant
         _chatId = chatId.Trim();
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _pollInterval = TimeSpan.FromSeconds(pollIntervalSeconds);
+        _useSudoForInstallCommands = useSudoForInstallCommands;
+        _stopOnRequiredFailure = stopOnRequiredFailure;
+        _aiAdvisor = aiAdvisor;
     }
 
-    /// <summary>
-    /// Runs continuous Telegram long-poll processing.
-    /// </summary>
     public async Task RunAsync(CancellationToken cancellationToken)
     {
         _logger.LogInformation("Telegram setup assistant started.");
@@ -76,30 +82,31 @@ public class TelegramSetupAssistant
         _logger.LogInformation("Telegram setup assistant stopped.");
     }
 
-    /// <summary>
-    /// Polls Telegram updates and handles incoming chat commands.
-    /// </summary>
     public async Task ProcessPendingMessagesAsync(CancellationToken cancellationToken)
     {
         var updates = await GetUpdatesAsync(cancellationToken);
-        if (updates.Count == 0)
-        {
-            return;
-        }
-
-        // On first poll, consume backlog without executing stale commands.
+        
         if (!_initialized)
         {
-            _nextUpdateId = updates.Max(u => u.UpdateId) + 1;
             _initialized = true;
-            _logger.LogInformation("Telegram setup assistant initialized at update offset {Offset}.", _nextUpdateId);
+            
+            // Skip any pre-existing backlog only once on startup.
+            if (updates.Count > 0)
+            {
+                _nextUpdateId = updates.Max(u => u.UpdateId) + 1;
+                _logger.LogInformation("Telegram setup assistant initialized at update offset {Offset}.", _nextUpdateId);
+                return;
+            }
+        }
+
+        if (updates.Count == 0)
+        {
             return;
         }
 
         foreach (var update in updates.OrderBy(u => u.UpdateId))
         {
             _nextUpdateId = Math.Max(_nextUpdateId, update.UpdateId + 1);
-
             if (!string.Equals(update.ChatId, _chatId, StringComparison.Ordinal))
             {
                 continue;
@@ -125,7 +132,7 @@ public class TelegramSetupAssistant
         if (IsCancelMessage(text))
         {
             _pendingPlan = null;
-            await SendMessageAsync("Pending setup request canceled.", cancellationToken);
+            await SendMessageAsync("Pending AI setup plan canceled.", cancellationToken);
             return;
         }
 
@@ -133,7 +140,7 @@ public class TelegramSetupAssistant
         {
             if (_pendingPlan is null)
             {
-                await SendMessageAsync("No pending setup plan. Tell me your app stack first.", cancellationToken);
+                await SendMessageAsync("No pending setup plan. Send your app technology first.", cancellationToken);
                 return;
             }
 
@@ -147,39 +154,59 @@ public class TelegramSetupAssistant
             return;
         }
 
-        if (!TryResolveStack(text, out var definition))
+        await SendMessageAsync("Analyzing server and generating AI setup plan. Please wait...", cancellationToken);
+        var (plan, error) = await BuildPlanFromAiAsync(text, cancellationToken);
+        if (plan is null)
         {
-            await SendMessageAsync(
-                "I can help with Angular, React, Next.js, Blazor, ASP.NET Core, Vue, and Node.js. " +
-                "Example: \"My application is Next.js\".",
-                cancellationToken);
+            await SendMessageAsync($"Could not generate setup plan.\nReason: {error}", cancellationToken);
             return;
         }
 
-        var analysis = AnalyzeRequirements(definition);
-        var missingResources = analysis.ResourceStatuses.Where(s => !s.IsInstalled).ToList();
+        _pendingPlan = plan;
+        await SendMessageAsync(BuildReadinessMessage(plan), cancellationToken);
+    }
 
-        if (!missingResources.Any())
+    private async Task<(PendingSetupPlan? Plan, string Error)> BuildPlanFromAiAsync(
+        string userRequest,
+        CancellationToken cancellationToken)
+    {
+        if (_aiAdvisor is null)
         {
-            _pendingPlan = null;
-            await SendMessageAsync(BuildReadinessMessage(definition, analysis.ResourceStatuses), cancellationToken);
-            return;
+            return (null, "AI advisor is not configured.");
         }
 
-        _pendingPlan = new PendingSetupPlan(
-            definition,
-            analysis.ResourceStatuses,
-            analysis.InstallActions,
-            DateTimeOffset.UtcNow);
+        var snapshot = await Task.Run(BuildServerSnapshotForPrompt, cancellationToken);
+        var prompt = BuildPlannerPrompt(userRequest, snapshot);
 
-        await SendMessageAsync(BuildReadinessMessage(definition, analysis.ResourceStatuses), cancellationToken);
+        string aiResponse;
+        try
+        {
+            aiResponse = await _aiAdvisor.GetSuggestionsAsync(prompt);
+        }
+        catch (Exception ex)
+        {
+            return (null, $"AI request failed ({ex.Message}).");
+        }
+
+        if (!TryParseAiPlan(aiResponse, userRequest, out var parsed, out var parseError))
+        {
+            return (null, $"AI returned an unstructured plan ({parseError}).");
+        }
+
+        return (new PendingSetupPlan(
+            parsed.Technology,
+            parsed.Summary,
+            parsed.Prerequisites,
+            parsed.InstallActions,
+            parsed.Notes,
+            DateTimeOffset.UtcNow), string.Empty);
     }
 
     private async Task ExecutePendingPlanAsync(CancellationToken cancellationToken)
     {
         if (_pendingPlan is null)
         {
-            await SendMessageAsync("No pending setup plan. Send your app stack first.", cancellationToken);
+            await SendMessageAsync("No pending setup plan. Send your app technology first.", cancellationToken);
             return;
         }
 
@@ -195,7 +222,7 @@ public class TelegramSetupAssistant
         if (!_pendingPlan.InstallActions.Any())
         {
             await SendMessageAsync(
-                "No executable automation steps were generated for the missing resources.\n\n" +
+                "AI plan has no executable setup commands.\n\n" +
                 BuildManualStepsMessage(_pendingPlan),
                 cancellationToken);
             _pendingPlan = null;
@@ -203,157 +230,111 @@ public class TelegramSetupAssistant
         }
 
         var plan = _pendingPlan;
-        await SendMessageAsync(
-            $"Starting setup for {plan.Definition.DisplayName}. Total steps: {plan.InstallActions.Count}.",
-            cancellationToken);
-
         var failures = new List<string>();
+        await SendMessageAsync($"Starting AI setup for {plan.Technology}. Total steps: {plan.InstallActions.Count}.", cancellationToken);
 
         for (var i = 0; i < plan.InstallActions.Count; i++)
         {
             var action = plan.InstallActions[i];
-            var stepNumber = i + 1;
-            await SendMessageAsync($"Step {stepNumber}/{plan.InstallActions.Count}: {action.Label}", cancellationToken);
+            var stepNo = i + 1;
+            await SendMessageAsync($"Step {stepNo}/{plan.InstallActions.Count}: {action.Label}", cancellationToken);
 
-            var result = await Task.Run(() => RunCommand(action.Command, 15 * 60 * 1000), cancellationToken);
+            var cmd = BuildExecutionCommand(action.Command);
+            var result = await Task.Run(() => RunCommand(cmd, 15 * 60 * 1000), cancellationToken);
+
             if (result.TimedOut)
             {
                 failures.Add($"{action.Label}: command timed out.");
-                await SendMessageAsync(
-                    $"Step {stepNumber} timed out. Manual command:\n{action.Command}",
-                    cancellationToken);
+                await SendMessageAsync($"Step {stepNo} timed out. Manual command:\n{action.Command}", cancellationToken);
+                if (_stopOnRequiredFailure && action.IsRequired)
+                {
+                    await SendMessageAsync($"Halting setup because required step timed out: {action.Label}.", cancellationToken);
+                    break;
+                }
+
                 continue;
             }
 
             if (result.ExitCode != 0)
             {
                 var summary = FirstNonEmptyLine(result.StdErr, result.StdOut);
+                var hint = ShouldSuggestSudo(summary)
+                    ? "\nHint: set TELEGRAM_SETUP_ASSISTANT_USE_SUDO=true and allow sudoers commands."
+                    : string.Empty;
                 failures.Add($"{action.Label}: exit code {result.ExitCode} ({summary})");
+
                 await SendMessageAsync(
-                    $"Step {stepNumber} failed (exit {result.ExitCode}).\n" +
-                    $"Command: {action.Command}\n" +
-                    $"Reason: {summary}",
+                    $"Step {stepNo} failed (exit {result.ExitCode}).\nCommand: {action.Command}\nReason: {summary}{hint}",
                     cancellationToken);
+
+                if (_stopOnRequiredFailure && action.IsRequired)
+                {
+                    await SendMessageAsync($"Halting setup because required step failed: {action.Label}.", cancellationToken);
+                    break;
+                }
+
                 continue;
             }
 
-            await SendMessageAsync($"Step {stepNumber} completed.", cancellationToken);
+            await SendMessageAsync($"Step {stepNo} completed.", cancellationToken);
         }
 
-        var finalAnalysis = AnalyzeRequirements(plan.Definition);
-        var finalMessage = BuildReadinessMessage(plan.Definition, finalAnalysis.ResourceStatuses);
+        var final = new List<string>
+        {
+            $"AI setup finished for {plan.Technology}.",
+            failures.Any() ? "Completed with failures:" : "All planned steps completed."
+        };
+
         if (failures.Any())
         {
-            finalMessage += "\n\nCompleted with failures:\n" + string.Join("\n", failures.Select(f => "- " + f));
+            final.AddRange(failures.Select(f => "- " + f));
         }
+
+        final.Add("Send your technology again for a fresh post-change analysis.");
 
         _pendingPlan = null;
-        await SendMessageAsync(finalMessage, cancellationToken);
+        await SendMessageAsync(string.Join("\n", final), cancellationToken);
     }
 
-    private static AnalysisResult AnalyzeRequirements(StackDefinition definition)
-    {
-        var resourceStatuses = new List<ResourceStatus>();
-
-        foreach (var requirement in definition.Requirements)
-        {
-            var detectCommand = OperatingSystem.IsWindows()
-                ? requirement.WindowsDetectCommand
-                : requirement.LinuxDetectCommand;
-            var versionCommand = OperatingSystem.IsWindows()
-                ? requirement.WindowsVersionCommand
-                : requirement.LinuxVersionCommand;
-
-            if (string.IsNullOrWhiteSpace(detectCommand))
-            {
-                resourceStatuses.Add(new ResourceStatus(requirement, false, "unknown"));
-                continue;
-            }
-
-            var probe = RunCommand(detectCommand, 8000);
-            if (probe.ExitCode != 0 || probe.TimedOut)
-            {
-                resourceStatuses.Add(new ResourceStatus(requirement, false, "not installed"));
-                continue;
-            }
-
-            var version = string.Empty;
-            if (!string.IsNullOrWhiteSpace(versionCommand))
-            {
-                var versionResult = RunCommand(versionCommand, 8000);
-                if (!versionResult.TimedOut)
-                {
-                    version = FirstNonEmptyLine(versionResult.StdOut, versionResult.StdErr);
-                }
-            }
-
-            resourceStatuses.Add(new ResourceStatus(
-                requirement,
-                true,
-                string.IsNullOrWhiteSpace(version) ? "installed" : version));
-        }
-
-        var installActions = resourceStatuses
-            .Where(s => !s.IsInstalled)
-            .Select(s => s.Requirement)
-            .Select(r => OperatingSystem.IsWindows()
-                ? new InstallAction(r.InstallLabel, r.WindowsInstallCommand)
-                : new InstallAction(r.InstallLabel, r.LinuxInstallCommand))
-            .Where(a => !string.IsNullOrWhiteSpace(a.Command))
-            .GroupBy(a => a.Command, StringComparer.Ordinal)
-            .Select(g => new InstallAction(string.Join(" + ", g.Select(x => x.Label).Distinct()), g.Key))
-            .ToList();
-
-        return new AnalysisResult(resourceStatuses, installActions);
-    }
-
-    private string BuildReadinessMessage(StackDefinition definition, IReadOnlyList<ResourceStatus> statuses)
+    private string BuildReadinessMessage(PendingSetupPlan plan)
     {
         var lines = new List<string>
         {
-            $"Server readiness check for {definition.DisplayName}",
+            $"AI setup plan for: {plan.Technology}",
             $"Platform: {(OperatingSystem.IsWindows() ? "Windows" : "Linux")}",
-            string.Empty
+            string.Empty,
+            "Summary:",
+            plan.Summary
         };
 
-        foreach (var status in statuses)
+        if (plan.Prerequisites.Any())
         {
-            var type = status.Requirement.Required ? "required" : "recommended";
-            var availability = status.IsInstalled ? "OK" : "Missing";
-            var detail = status.IsInstalled && !string.IsNullOrWhiteSpace(status.Version)
-                ? $" ({status.Version})"
-                : string.Empty;
-            lines.Add($"- {status.Requirement.Name} [{type}]: {availability}{detail}");
+            lines.Add(string.Empty);
+            lines.Add("Detected prerequisites:");
+            foreach (var p in plan.Prerequisites)
+            {
+                var type = p.Required ? "required" : "recommended";
+                var evidence = string.IsNullOrWhiteSpace(p.Evidence) ? string.Empty : $" ({p.Evidence})";
+                lines.Add($"- {p.Name} [{type}]: {p.Status}{evidence}");
+            }
         }
-
-        var missingRequired = statuses.Where(s => !s.IsInstalled && s.Requirement.Required).ToList();
-        var missingAny = statuses.Where(s => !s.IsInstalled).ToList();
 
         lines.Add(string.Empty);
+        lines.Add($"Planned setup steps: {plan.InstallActions.Count}");
+        lines.Add(plan.InstallActions.Any()
+            ? "Reply `okay` to run setup commands now."
+            : "No executable steps were returned by AI.");
 
-        if (!missingAny.Any())
+        if (OperatingSystem.IsLinux() && !_useSudoForInstallCommands && !IsRunningAsRoot())
         {
-            lines.Add($"Server is ready for {definition.DisplayName}. No setup actions needed.");
-            return string.Join("\n", lines);
-        }
-
-        if (!missingRequired.Any())
-        {
-            lines.Add($"Required resources are present for {definition.DisplayName}.");
-            lines.Add("Only recommended resources are missing.");
-        }
-        else
-        {
-            lines.Add($"Missing required resources: {string.Join(", ", missingRequired.Select(s => s.Requirement.Name))}");
+            lines.Add("Note: service is non-root and sudo mode is disabled; privileged commands may fail.");
         }
 
-        if (OperatingSystem.IsLinux())
+        if (plan.Notes.Any())
         {
-            lines.Add("Reply `okay` to run setup commands now.");
-        }
-        else
-        {
-            lines.Add("Automated setup is available on Linux only in this version.");
+            lines.Add(string.Empty);
+            lines.Add("AI notes:");
+            lines.AddRange(plan.Notes.Select(n => "- " + n));
         }
 
         lines.Add("Reply `steps` to view commands, or `cancel` to discard this plan.");
@@ -362,198 +343,170 @@ public class TelegramSetupAssistant
 
     private static string BuildManualStepsMessage(PendingSetupPlan plan)
     {
-        var lines = new List<string>
-        {
-            $"Setup commands for {plan.Definition.DisplayName}:"
-        };
-
+        var lines = new List<string> { $"AI setup commands for {plan.Technology}:" };
         if (!plan.InstallActions.Any())
         {
-            lines.Add("- No predefined commands available for this platform.");
+            lines.Add("- No executable commands available.");
             return string.Join("\n", lines);
         }
 
-        foreach (var action in plan.InstallActions)
+        for (var i = 0; i < plan.InstallActions.Count; i++)
         {
-            lines.Add($"- {action.Label}: {action.Command}");
+            var action = plan.InstallActions[i];
+            var type = action.IsRequired ? "required" : "recommended";
+            lines.Add($"{i + 1}. {action.Label} [{type}]");
+            lines.Add($"   {action.Command}");
         }
 
         return string.Join("\n", lines);
     }
 
-    private static bool IsHelpMessage(string text)
-    {
-        return string.Equals(text, "/start", StringComparison.OrdinalIgnoreCase) ||
-               string.Equals(text, "/help", StringComparison.OrdinalIgnoreCase) ||
-               string.Equals(text, "help", StringComparison.OrdinalIgnoreCase);
-    }
+    private static bool IsHelpMessage(string text) =>
+        string.Equals(text, "/start", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(text, "/help", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(text, "help", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsOkayMessage(string text)
     {
-        var normalized = text.Trim().TrimEnd('.', '!', '?').ToLowerInvariant();
-        return normalized is "ok" or "okay" or "yes" or "start" or "go ahead";
+        var value = text.Trim().TrimEnd('.', '!', '?').ToLowerInvariant();
+        return value is "ok" or "okay" or "yes" or "start" or "go ahead";
     }
 
     private static bool IsCancelMessage(string text)
     {
-        var normalized = text.Trim().ToLowerInvariant();
-        return normalized is "cancel" or "stop" or "abort";
+        var value = text.Trim().ToLowerInvariant();
+        return value is "cancel" or "stop" or "abort";
     }
 
-    private static string BuildHelpMessage()
+    private static string BuildHelpMessage() =>
+        "Send your app technology and I will generate an AI setup plan from current server analysis.\n" +
+        "Examples:\n- My app is Django with Postgres\n- We use Next.js\n- I need to host FastAPI\n\n" +
+        "Then reply `okay` to execute, `steps` to view commands, or `cancel`.";
+
+    private static string BuildServerSnapshotForPrompt()
+    {
+        var lines = new List<string>
+        {
+            $"GeneratedAtUtc: {DateTimeOffset.UtcNow:O}",
+            $"Platform: {(OperatingSystem.IsWindows() ? "Windows" : "Linux")}"
+        };
+
+        if (OperatingSystem.IsLinux())
+        {
+            lines.Add(ReadProbe("Kernel", "uname -srm", 5000));
+            lines.Add(ReadProbe("CurrentUser", "whoami", 3000));
+            lines.Add(ReadProbe("UserId", "id -u", 3000));
+            lines.Add(ReadProbe("OsRelease", "cat /etc/os-release | sed -n '1,6p'", 5000, true));
+            lines.Add(ReadProbe("PackageManagers", "for c in apt-get apt dnf yum pacman zypper apk; do if command -v \"$c\" >/dev/null 2>&1; then echo \"$c\"; fi; done", 5000, true));
+            lines.Add(ReadProbe("InstalledRuntimes", "for c in node npm pnpm yarn bun dotnet java python3 go docker nginx pm2 caddy apache2; do if command -v \"$c\" >/dev/null 2>&1; then printf \"%s=\" \"$c\"; ($c --version 2>/dev/null || $c -v 2>/dev/null || echo installed) | head -n 1; fi; done", 8000, true));
+            lines.Add(ReadProbe("Systemd", "systemctl --version | head -n 1", 4000));
+            lines.Add(ReadProbe("Memory", "free -h | sed -n '1,2p'", 4000, true));
+            lines.Add(ReadProbe("DiskRoot", "df -h / | tail -n 1", 4000));
+        }
+        else
+        {
+            lines.Add(ReadProbe("WindowsVersion", "[System.Environment]::OSVersion.VersionString", 5000));
+            lines.Add(ReadProbe("CurrentUser", "$env:USERNAME", 3000));
+            lines.Add(ReadProbe("PackageManager", "if (Get-Command winget -ErrorAction SilentlyContinue) { 'winget' } else { 'none' }", 4000));
+        }
+
+        var snapshot = string.Join("\n", lines);
+        return snapshot.Length <= 5000 ? snapshot : snapshot[..5000] + "\n[Server snapshot truncated]";
+    }
+
+    private static string BuildPlannerPrompt(string userRequest, string serverSnapshot)
     {
         return
-            "Send your app stack and I will check server readiness.\n" +
-            "Examples:\n" +
-            "- My application is Angular\n" +
-            "- My app is Next.js\n" +
-            "- We are using Blazor\n\n" +
-            "Then reply `okay` to start setup, `steps` to view commands, or `cancel`.";
+            "You are a senior DevOps setup planner. Return ONLY valid JSON with this schema: " +
+            "{\"technology\":\"string\",\"summary\":\"string\",\"prerequisites\":[{\"name\":\"string\",\"required\":true,\"status\":\"installed|missing|unknown\",\"evidence\":\"string\"}],\"steps\":[{\"title\":\"string\",\"command\":\"single-line shell command\",\"required\":true}],\"notes\":[\"string\"]}. " +
+            "Use detected package manager. Keep max 12 steps. Avoid destructive commands. If already installed, avoid reinstalling. " +
+            $"User request:\n{userRequest}\n\nServer snapshot:\n{serverSnapshot}";
     }
 
-    private static bool TryResolveStack(string text, out StackDefinition definition)
+    private static bool TryParseAiPlan(string response, string userRequest, out ParsedAiPlan plan, out string error)
     {
-        var normalized = text.ToLowerInvariant();
-
-        if (normalized.Contains("next.js") || normalized.Contains("nextjs") || normalized.Contains("next js"))
+        plan = default!;
+        if (string.IsNullOrWhiteSpace(response))
         {
-            definition = BuildNodeWebDefinition("Next.js");
-            return true;
+            error = "empty response";
+            return false;
         }
 
-        if (normalized.Contains("angular"))
+        if (!TryExtractJsonObject(response, out var json))
         {
-            definition = BuildNodeWebDefinition("Angular");
-            return true;
+            error = "response is not JSON";
+            return false;
         }
 
-        if (normalized.Contains("react"))
+        AiPlanDto? dto;
+        try
         {
-            definition = BuildNodeWebDefinition("React");
-            return true;
+            dto = JsonSerializer.Deserialize<AiPlanDto>(json, PlannerJsonOptions);
+        }
+        catch (Exception ex)
+        {
+            error = $"JSON parse failed ({ex.Message})";
+            return false;
         }
 
-        if (normalized.Contains("vue"))
+        if (dto is null)
         {
-            definition = BuildNodeWebDefinition("Vue.js");
-            return true;
+            error = "JSON payload is null";
+            return false;
         }
 
-        if (normalized.Contains("blazor"))
+        var technology = FirstNonEmpty(dto.Technology, userRequest);
+        var summary = FirstNonEmpty(dto.Summary, "AI generated setup plan.");
+
+        var prerequisites = (dto.Prerequisites ?? new List<AiPrerequisiteDto>())
+            .Where(p => !string.IsNullOrWhiteSpace(p.Name))
+            .Select(p => new PrerequisiteStatus(
+                p.Name!.Trim(),
+                p.Required ?? true,
+                NormalizeStatus(p.Status),
+                p.Evidence?.Trim() ?? string.Empty))
+            .ToList();
+
+        var notes = (dto.Notes ?? new List<string>())
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .Select(n => n.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var actions = new List<InstallAction>();
+        foreach (var step in dto.Steps ?? new List<AiStepDto>())
         {
-            definition = BuildBlazorDefinition();
-            return true;
-        }
-
-        if (normalized.Contains("asp.net") || normalized.Contains("aspnet") || normalized.Contains(".net") || normalized.Contains("dotnet"))
-        {
-            definition = BuildBlazorDefinition("ASP.NET Core");
-            return true;
-        }
-
-        if (normalized.Contains("node"))
-        {
-            definition = BuildNodeWebDefinition("Node.js");
-            return true;
-        }
-
-        definition = null!;
-        return false;
-    }
-
-    private static StackDefinition BuildNodeWebDefinition(string displayName)
-    {
-        return new StackDefinition(
-            displayName,
-            new[]
+            var title = FirstNonEmpty(step.Title, "Setup step");
+            var command = NormalizeCommand(step.Command);
+            if (string.IsNullOrWhiteSpace(command))
             {
-                new ResourceRequirement(
-                    "Node.js (LTS)",
-                    true,
-                    "command -v node >/dev/null 2>&1",
-                    "node --version",
-                    "Install Node.js and npm",
-                    "apt-get update && apt-get install -y nodejs npm",
-                    "where.exe node > $null 2>&1; if ($LASTEXITCODE -eq 0) { exit 0 } else { exit 1 }",
-                    "node --version",
-                    "winget install OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements"),
-                new ResourceRequirement(
-                    "npm",
-                    true,
-                    "command -v npm >/dev/null 2>&1",
-                    "npm --version",
-                    "Install Node.js and npm",
-                    "apt-get update && apt-get install -y nodejs npm",
-                    "where.exe npm > $null 2>&1; if ($LASTEXITCODE -eq 0) { exit 0 } else { exit 1 }",
-                    "npm --version",
-                    "winget install OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements"),
-                new ResourceRequirement(
-                    "PM2",
-                    false,
-                    "command -v pm2 >/dev/null 2>&1",
-                    "pm2 --version",
-                    "Install PM2 process manager",
-                    "npm install -g pm2",
-                    "where.exe pm2 > $null 2>&1; if ($LASTEXITCODE -eq 0) { exit 0 } else { exit 1 }",
-                    "pm2 --version",
-                    "npm install -g pm2"),
-                new ResourceRequirement(
-                    "Nginx",
-                    false,
-                    "command -v nginx >/dev/null 2>&1",
-                    "nginx -v 2>&1",
-                    "Install and start Nginx",
-                    "apt-get install -y nginx && systemctl enable --now nginx",
-                    "where.exe nginx > $null 2>&1; if ($LASTEXITCODE -eq 0) { exit 0 } else { exit 1 }",
-                    "nginx -v",
-                    string.Empty)
-            });
-    }
+                continue;
+            }
 
-    private static StackDefinition BuildBlazorDefinition(string displayName = "Blazor")
-    {
-        return new StackDefinition(
-            displayName,
-            new[]
+            if (IsPotentiallyDestructive(command))
             {
-                new ResourceRequirement(
-                    ".NET SDK",
-                    true,
-                    "command -v dotnet >/dev/null 2>&1",
-                    "dotnet --version",
-                    "Install .NET SDK 8.0",
-                    "apt-get update && apt-get install -y dotnet-sdk-8.0",
-                    "where.exe dotnet > $null 2>&1; if ($LASTEXITCODE -eq 0) { exit 0 } else { exit 1 }",
-                    "dotnet --version",
-                    "winget install Microsoft.DotNet.SDK.8 --accept-package-agreements --accept-source-agreements"),
-                new ResourceRequirement(
-                    "ASP.NET Core Runtime",
-                    true,
-                    "dotnet --list-runtimes | grep -q Microsoft.AspNetCore.App",
-                    "dotnet --list-runtimes | grep Microsoft.AspNetCore.App | head -n 1",
-                    "Install ASP.NET Core Runtime 8.0",
-                    "apt-get install -y aspnetcore-runtime-8.0",
-                    "$r = dotnet --list-runtimes 2>$null | Select-String 'Microsoft.AspNetCore.App'; if ($r) { exit 0 } else { exit 1 }",
-                    "dotnet --list-runtimes | Select-String 'Microsoft.AspNetCore.App' | Select-Object -First 1",
-                    "winget install Microsoft.DotNet.AspNetCore.8 --accept-package-agreements --accept-source-agreements"),
-                new ResourceRequirement(
-                    "Nginx reverse proxy",
-                    false,
-                    "command -v nginx >/dev/null 2>&1",
-                    "nginx -v 2>&1",
-                    "Install and start Nginx",
-                    "apt-get install -y nginx && systemctl enable --now nginx",
-                    "where.exe nginx > $null 2>&1; if ($LASTEXITCODE -eq 0) { exit 0 } else { exit 1 }",
-                    "nginx -v",
-                    string.Empty)
-            });
+                notes.Add($"Skipped potentially destructive command from AI: {title}");
+                continue;
+            }
+
+            actions.Add(new InstallAction(title, command, step.Required ?? true));
+        }
+
+        if (actions.Count == 0)
+        {
+            error = "AI returned no executable commands";
+            return false;
+        }
+
+        plan = new ParsedAiPlan(technology, summary, prerequisites, actions, notes);
+        error = string.Empty;
+        return true;
     }
 
     private async Task<IReadOnlyList<TelegramInboundMessage>> GetUpdatesAsync(CancellationToken cancellationToken)
     {
         var timeoutSeconds = Math.Clamp((int)_pollInterval.TotalSeconds, 1, 30);
-        var endpoint =
-            $"https://api.telegram.org/bot{_token}/getUpdates?offset={_nextUpdateId}&limit=20&timeout={timeoutSeconds}&allowed_updates=%5B%22message%22%5D";
+        var endpoint = $"https://api.telegram.org/bot{_token}/getUpdates?offset={_nextUpdateId}&limit=20&timeout={timeoutSeconds}&allowed_updates=%5B%22message%22%5D";
 
         using var response = await HttpClient.GetAsync(endpoint, cancellationToken);
         response.EnsureSuccessStatusCode();
@@ -565,26 +518,21 @@ public class TelegramSetupAssistant
         }
 
         using var document = JsonDocument.Parse(payload);
-        if (!document.RootElement.TryGetProperty("ok", out var okElement) || !okElement.GetBoolean())
+        if (!document.RootElement.TryGetProperty("ok", out var ok) || !ok.GetBoolean())
         {
             return Array.Empty<TelegramInboundMessage>();
         }
 
-        if (!document.RootElement.TryGetProperty("result", out var resultElement) ||
-            resultElement.ValueKind != JsonValueKind.Array)
+        if (!document.RootElement.TryGetProperty("result", out var result) || result.ValueKind != JsonValueKind.Array)
         {
             return Array.Empty<TelegramInboundMessage>();
         }
 
         var updates = new List<TelegramInboundMessage>();
-        foreach (var updateElement in resultElement.EnumerateArray())
+        foreach (var updateElement in result.EnumerateArray())
         {
-            if (!updateElement.TryGetProperty("update_id", out var updateIdElement))
-            {
-                continue;
-            }
-
-            if (!updateIdElement.TryGetInt64(out var updateId))
+            if (!updateElement.TryGetProperty("update_id", out var updateIdElement) ||
+                !updateIdElement.TryGetInt64(out var updateId))
             {
                 continue;
             }
@@ -600,13 +548,6 @@ public class TelegramSetupAssistant
                 continue;
             }
 
-            var chatId = chatIdElement.ValueKind switch
-            {
-                JsonValueKind.Number => chatIdElement.GetInt64().ToString(CultureInfo.InvariantCulture),
-                JsonValueKind.String => chatIdElement.GetString() ?? string.Empty,
-                _ => string.Empty
-            };
-
             if (!messageElement.TryGetProperty("text", out var textElement))
             {
                 continue;
@@ -617,6 +558,13 @@ public class TelegramSetupAssistant
             {
                 continue;
             }
+
+            var chatId = chatIdElement.ValueKind switch
+            {
+                JsonValueKind.Number => chatIdElement.GetInt64().ToString(CultureInfo.InvariantCulture),
+                JsonValueKind.String => chatIdElement.GetString() ?? string.Empty,
+                _ => string.Empty
+            };
 
             updates.Add(new TelegramInboundMessage(updateId, chatId, text));
         }
@@ -631,19 +579,80 @@ public class TelegramSetupAssistant
             return;
         }
 
-        var safeMessage = message.Length > 3900
-            ? message[..3875] + "\n\n[Message truncated]"
-            : message;
-
+        var safe = message.Length > 3900 ? message[..3875] + "\n\n[Message truncated]" : message;
         using var response = await HttpClient.PostAsync(
             $"https://api.telegram.org/bot{_token}/sendMessage",
             new FormUrlEncodedContent([
                 new KeyValuePair<string, string>("chat_id", _chatId),
-                new KeyValuePair<string, string>("text", safeMessage)
+                new KeyValuePair<string, string>("text", safe)
             ]),
             cancellationToken);
 
         response.EnsureSuccessStatusCode();
+    }
+
+    private string BuildExecutionCommand(string command)
+    {
+        if (string.IsNullOrWhiteSpace(command) || !OperatingSystem.IsLinux() || !_useSudoForInstallCommands || IsRunningAsRoot())
+        {
+            return command;
+        }
+
+        var escaped = EscapeForDoubleQuotedBash(command);
+        return $"sudo /bin/bash -lc \"{escaped}\"";
+    }
+
+    private static bool ShouldSuggestSudo(string errorSummary)
+    {
+        if (string.IsNullOrWhiteSpace(errorSummary))
+        {
+            return false;
+        }
+
+        return errorSummary.Contains("permission denied", StringComparison.OrdinalIgnoreCase) ||
+               errorSummary.Contains("could not open lock file", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsRunningAsRoot()
+    {
+        var user = Environment.GetEnvironmentVariable("USER") ??
+                   Environment.GetEnvironmentVariable("USERNAME") ??
+                   Environment.UserName;
+        return string.Equals(user, "root", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string EscapeForDoubleQuotedBash(string command) =>
+        command.Replace("\\", "\\\\", StringComparison.Ordinal)
+            .Replace("\"", "\\\"", StringComparison.Ordinal)
+            .Replace("$", "\\$", StringComparison.Ordinal)
+            .Replace("`", "\\`", StringComparison.Ordinal);
+
+    private static string ReadProbe(string label, string command, int timeoutMs, bool multiline = false)
+    {
+        var result = RunCommand(command, timeoutMs);
+        if (result.TimedOut)
+        {
+            return $"{label}: timed out";
+        }
+
+        if (result.ExitCode != 0)
+        {
+            return $"{label}: unavailable ({FirstNonEmptyLine(result.StdErr, result.StdOut)})";
+        }
+
+        var output = string.IsNullOrWhiteSpace(result.StdOut) ? result.StdErr : result.StdOut;
+        if (string.IsNullOrWhiteSpace(output))
+        {
+            return $"{label}: available";
+        }
+
+        if (!multiline)
+        {
+            return $"{label}: {FirstNonEmptyLine(output)}";
+        }
+
+        var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Take(8);
+        return $"{label}:\n{string.Join("\n", lines)}";
     }
 
     private static CommandResult RunCommand(string command, int timeoutMs)
@@ -653,13 +662,11 @@ public class TelegramSetupAssistant
             return new CommandResult(-1, string.Empty, "Command is empty.", false);
         }
 
-        using var process = new Process();
-        process.StartInfo = CreateProcessStartInfo(command);
+        using var process = new Process { StartInfo = CreateProcessStartInfo(command) };
         process.Start();
 
         var stdout = process.StandardOutput.ReadToEnd();
         var stderr = process.StandardError.ReadToEnd();
-
         if (!process.WaitForExit(timeoutMs))
         {
             try
@@ -668,7 +675,7 @@ public class TelegramSetupAssistant
             }
             catch
             {
-                // Ignore kill failures when process already exited.
+                // ignore kill errors
             }
 
             return new CommandResult(-1, stdout.Trim(), stderr.Trim(), true);
@@ -704,6 +711,76 @@ public class TelegramSetupAssistant
         return startInfo;
     }
 
+    private static bool TryExtractJsonObject(string raw, out string json)
+    {
+        var start = raw.IndexOf('{');
+        var end = raw.LastIndexOf('}');
+        if (start < 0 || end <= start)
+        {
+            json = string.Empty;
+            return false;
+        }
+
+        json = raw[start..(end + 1)];
+        return true;
+    }
+
+    private static string NormalizeStatus(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return "unknown";
+        }
+
+        var value = raw.Trim().ToLowerInvariant();
+        return value switch
+        {
+            "installed" or "present" or "ok" or "available" => "installed",
+            "missing" or "absent" or "not installed" => "missing",
+            _ => "unknown"
+        };
+    }
+
+    private static string NormalizeCommand(string? command)
+    {
+        if (string.IsNullOrWhiteSpace(command))
+        {
+            return string.Empty;
+        }
+
+        var normalized = command
+            .Replace("```bash", string.Empty, StringComparison.OrdinalIgnoreCase)
+            .Replace("```", string.Empty, StringComparison.OrdinalIgnoreCase)
+            .Trim();
+        return string.Join(" ", normalized.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)).Trim();
+    }
+
+    private static bool IsPotentiallyDestructive(string command)
+    {
+        var value = command.ToLowerInvariant();
+        return value.Contains(" rm -rf ", StringComparison.Ordinal) ||
+               value.StartsWith("rm -rf", StringComparison.Ordinal) ||
+               value.Contains("mkfs", StringComparison.Ordinal) ||
+               value.Contains("dd if=", StringComparison.Ordinal) ||
+               value.Contains("shutdown", StringComparison.Ordinal) ||
+               value.Contains("reboot", StringComparison.Ordinal) ||
+               value.Contains("userdel", StringComparison.Ordinal) ||
+               value.Contains("del /f /s /q", StringComparison.Ordinal);
+    }
+
+    private static string FirstNonEmpty(params string?[] values)
+    {
+        foreach (var value in values)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return value.Trim();
+            }
+        }
+
+        return string.Empty;
+    }
+
     private static string FirstNonEmptyLine(params string[] values)
     {
         foreach (var value in values)
@@ -713,10 +790,7 @@ public class TelegramSetupAssistant
                 continue;
             }
 
-            var line = value
-                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .FirstOrDefault();
-
+            var line = value.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault();
             if (!string.IsNullOrWhiteSpace(line))
             {
                 return line;
@@ -728,23 +802,43 @@ public class TelegramSetupAssistant
 
     private sealed record TelegramInboundMessage(long UpdateId, string ChatId, string Text);
     private sealed record CommandResult(int ExitCode, string StdOut, string StdErr, bool TimedOut);
-    private sealed record InstallAction(string Label, string Command);
-    private sealed record AnalysisResult(IReadOnlyList<ResourceStatus> ResourceStatuses, IReadOnlyList<InstallAction> InstallActions);
+    private sealed record InstallAction(string Label, string Command, bool IsRequired);
+    private sealed record PrerequisiteStatus(string Name, bool Required, string Status, string Evidence);
     private sealed record PendingSetupPlan(
-        StackDefinition Definition,
-        IReadOnlyList<ResourceStatus> ResourceStatuses,
+        string Technology,
+        string Summary,
+        IReadOnlyList<PrerequisiteStatus> Prerequisites,
         IReadOnlyList<InstallAction> InstallActions,
+        IReadOnlyList<string> Notes,
         DateTimeOffset RequestedAtUtc);
-    private sealed record StackDefinition(string DisplayName, IReadOnlyList<ResourceRequirement> Requirements);
-    private sealed record ResourceStatus(ResourceRequirement Requirement, bool IsInstalled, string Version);
-    private sealed record ResourceRequirement(
-        string Name,
-        bool Required,
-        string LinuxDetectCommand,
-        string LinuxVersionCommand,
-        string InstallLabel,
-        string LinuxInstallCommand,
-        string WindowsDetectCommand,
-        string WindowsVersionCommand,
-        string WindowsInstallCommand);
+    private sealed record ParsedAiPlan(
+        string Technology,
+        string Summary,
+        IReadOnlyList<PrerequisiteStatus> Prerequisites,
+        IReadOnlyList<InstallAction> InstallActions,
+        IReadOnlyList<string> Notes);
+
+    private sealed class AiPlanDto
+    {
+        public string? Technology { get; set; }
+        public string? Summary { get; set; }
+        public List<AiPrerequisiteDto>? Prerequisites { get; set; }
+        public List<AiStepDto>? Steps { get; set; }
+        public List<string>? Notes { get; set; }
+    }
+
+    private sealed class AiPrerequisiteDto
+    {
+        public string? Name { get; set; }
+        public bool? Required { get; set; }
+        public string? Status { get; set; }
+        public string? Evidence { get; set; }
+    }
+
+    private sealed class AiStepDto
+    {
+        public string? Title { get; set; }
+        public string? Command { get; set; }
+        public bool? Required { get; set; }
+    }
 }

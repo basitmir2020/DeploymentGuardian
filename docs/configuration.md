@@ -18,6 +18,8 @@ Dedicated environment variables (not `GUARDIAN_`) are used for notifications and
 - `TELEGRAM_CHAT_ID`
 - `TELEGRAM_SETUP_ASSISTANT_ENABLED` (optional, default `true`)
 - `TELEGRAM_SETUP_ASSISTANT_POLL_SECONDS` (optional, default `5`, valid `1..60`)
+- `TELEGRAM_SETUP_ASSISTANT_USE_SUDO` (optional, default `false`)
+- `TELEGRAM_SETUP_ASSISTANT_STOP_ON_REQUIRED_FAILURE` (optional, default `true`)
 - `WEBHOOK_URL`
 - `WEBHOOK_AUTH_HEADER`
 - `WEBHOOK_AUTH_VALUE`
@@ -70,6 +72,8 @@ Optional setup assistant controls:
 
 - `TELEGRAM_SETUP_ASSISTANT_ENABLED=true|false`
 - `TELEGRAM_SETUP_ASSISTANT_POLL_SECONDS=5`
+- `TELEGRAM_SETUP_ASSISTANT_USE_SUDO=true|false`
+- `TELEGRAM_SETUP_ASSISTANT_STOP_ON_REQUIRED_FAILURE=true|false`
 
 ### Webhook
 
@@ -104,12 +108,11 @@ Webhook payload shape:
   - `TELEGRAM_TOKEN` + `TELEGRAM_CHAT_ID` are configured
   - `ScanIntervalSeconds > 0` (interval mode)
   - `TELEGRAM_SETUP_ASSISTANT_ENABLED` is not set to `false`
-- It listens for stack messages like:
-  - `My application is Angular`
-  - `My app is Next.js`
-  - `We are using Blazor`
-- It replies with server prerequisite analysis and missing resources.
-- If you reply `okay`, it starts predefined setup commands for missing resources.
+- It accepts free-form technology messages (for example `My app uses Laravel + Redis`).
+- It analyzes current server state and asks AI to generate a setup plan (JSON commands + prerequisites).
+- If you reply `okay`, it executes AI-generated commands.
+- If `TELEGRAM_SETUP_ASSISTANT_USE_SUDO=true`, Linux install commands are executed through `sudo`.
+- If `TELEGRAM_SETUP_ASSISTANT_STOP_ON_REQUIRED_FAILURE=true`, setup halts when a required step fails.
 - `steps` prints commands without executing.
 - `cancel` discards the pending setup plan.
 

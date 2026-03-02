@@ -109,7 +109,7 @@ var historyStore = new AlertHistoryStore(
     options.AlertHistoryMaxEntries);
 
 var notifier = BuildNotifier(options);
-var telegramSetupAssistant = BuildTelegramSetupAssistant(logger);
+var telegramSetupAssistant = BuildTelegramSetupAssistant(logger, aiAdvisor);
 Task? telegramSetupAssistantTask = null;
 
 if (telegramSetupAssistant is not null && runInterval > TimeSpan.Zero)
@@ -687,14 +687,18 @@ static IAiAdvisor BuildAiAdvisor()
 /// <summary>
 /// Creates Telegram setup assistant for interactive stack provisioning workflow.
 /// </summary>
-static TelegramSetupAssistant? BuildTelegramSetupAssistant(ILogger logger)
+static TelegramSetupAssistant? BuildTelegramSetupAssistant(ILogger logger, IAiAdvisor? aiAdvisor)
 {
     var telegramToken = Environment.GetEnvironmentVariable("TELEGRAM_TOKEN");
     var telegramChatId = Environment.GetEnvironmentVariable("TELEGRAM_CHAT_ID");
     var enabledRaw = Environment.GetEnvironmentVariable("TELEGRAM_SETUP_ASSISTANT_ENABLED");
     var pollRaw = Environment.GetEnvironmentVariable("TELEGRAM_SETUP_ASSISTANT_POLL_SECONDS");
+    var useSudoRaw = Environment.GetEnvironmentVariable("TELEGRAM_SETUP_ASSISTANT_USE_SUDO");
+    var stopOnRequiredFailureRaw = Environment.GetEnvironmentVariable("TELEGRAM_SETUP_ASSISTANT_STOP_ON_REQUIRED_FAILURE");
     var enabled = true;
     var pollSeconds = 5;
+    var useSudo = false;
+    var stopOnRequiredFailure = true;
 
     if (!string.IsNullOrWhiteSpace(enabledRaw) &&
         !bool.TryParse(enabledRaw, out enabled))
@@ -713,6 +717,18 @@ static TelegramSetupAssistant? BuildTelegramSetupAssistant(ILogger logger)
         throw new InvalidOperationException("TELEGRAM_SETUP_ASSISTANT_POLL_SECONDS must be between 1 and 60.");
     }
 
+    if (!string.IsNullOrWhiteSpace(useSudoRaw) &&
+        !bool.TryParse(useSudoRaw, out useSudo))
+    {
+        throw new InvalidOperationException("TELEGRAM_SETUP_ASSISTANT_USE_SUDO must be true or false.");
+    }
+
+    if (!string.IsNullOrWhiteSpace(stopOnRequiredFailureRaw) &&
+        !bool.TryParse(stopOnRequiredFailureRaw, out stopOnRequiredFailure))
+    {
+        throw new InvalidOperationException("TELEGRAM_SETUP_ASSISTANT_STOP_ON_REQUIRED_FAILURE must be true or false.");
+    }
+
     if (!enabled ||
         string.IsNullOrWhiteSpace(telegramToken) ||
         string.IsNullOrWhiteSpace(telegramChatId))
@@ -720,7 +736,14 @@ static TelegramSetupAssistant? BuildTelegramSetupAssistant(ILogger logger)
         return null;
     }
 
-    return new TelegramSetupAssistant(telegramToken, telegramChatId, logger, pollSeconds);
+    return new TelegramSetupAssistant(
+        telegramToken,
+        telegramChatId,
+        logger,
+        pollSeconds,
+        useSudo,
+        stopOnRequiredFailure,
+        aiAdvisor);
 }
 
 /// <summary>
