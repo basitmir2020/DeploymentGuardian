@@ -109,6 +109,13 @@ var historyStore = new AlertHistoryStore(
     options.AlertHistoryMaxEntries);
 
 var notifier = BuildNotifier(options);
+var telegramSetupAssistant = BuildTelegramSetupAssistant(logger);
+Task? telegramSetupAssistantTask = null;
+
+if (telegramSetupAssistant is not null && runInterval > TimeSpan.Zero)
+{
+    telegramSetupAssistantTask = telegramSetupAssistant.RunAsync(shutdownToken);
+}
 
 if (runInterval <= TimeSpan.Zero)
 {
@@ -169,6 +176,18 @@ while (!shutdownToken.IsCancellationRequested)
     }
 }
 
+if (telegramSetupAssistantTask is not null)
+{
+    try
+    {
+        await telegramSetupAssistantTask;
+    }
+    catch (OperationCanceledException)
+    {
+        // Ignore cancellation during graceful shutdown.
+    }
+}
+
 logger.LogInformation("Deployment Guardian stopped.");
 
 /// <summary>
@@ -209,13 +228,12 @@ static async Task ExecuteCycleAsync(
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        context = new ServerContext
-        {
-            Metrics = serverAnalyzer.Analyze(),
-            Processes = processAnalyzer.GetTopProcesses(),
-            Security = securityAnalyzer.Analyze(),
-            Services = serviceScanner.Scan()
-        };
+        context = await CollectServerContextAsync(
+            serverAnalyzer,
+            processAnalyzer,
+            securityAnalyzer,
+            serviceScanner,
+            cancellationToken);
 
         var alerts = engine.Evaluate(context);
 
@@ -316,6 +334,32 @@ static async Task ExecuteCycleAsync(
             ex.Message));
         logger.LogError(ex, "Cycle failed.");
     }
+}
+
+/// <summary>
+/// Collects server, process, security, and service data in parallel for faster cycle latency.
+/// </summary>
+static async Task<ServerContext> CollectServerContextAsync(
+    IServerDataCollector serverAnalyzer,
+    IProcessDataCollector processAnalyzer,
+    ISecurityDataCollector securityAnalyzer,
+    IServiceDataCollector serviceScanner,
+    CancellationToken cancellationToken)
+{
+    var metricsTask = Task.Run(serverAnalyzer.Analyze, cancellationToken);
+    var processesTask = Task.Run(processAnalyzer.GetTopProcesses, cancellationToken);
+    var securityTask = Task.Run(securityAnalyzer.Analyze, cancellationToken);
+    var servicesTask = Task.Run(serviceScanner.Scan, cancellationToken);
+
+    await Task.WhenAll(metricsTask, processesTask, securityTask, servicesTask);
+
+    return new ServerContext
+    {
+        Metrics = await metricsTask,
+        Processes = await processesTask,
+        Security = await securityTask,
+        Services = await servicesTask
+    };
 }
 
 /// <summary>
@@ -638,6 +682,45 @@ static IAiAdvisor BuildAiAdvisor()
     }
 
     return new OllamaAdvisor(ollamaBaseUrl, model, timeoutSeconds);
+}
+
+/// <summary>
+/// Creates Telegram setup assistant for interactive stack provisioning workflow.
+/// </summary>
+static TelegramSetupAssistant? BuildTelegramSetupAssistant(ILogger logger)
+{
+    var telegramToken = Environment.GetEnvironmentVariable("TELEGRAM_TOKEN");
+    var telegramChatId = Environment.GetEnvironmentVariable("TELEGRAM_CHAT_ID");
+    var enabledRaw = Environment.GetEnvironmentVariable("TELEGRAM_SETUP_ASSISTANT_ENABLED");
+    var pollRaw = Environment.GetEnvironmentVariable("TELEGRAM_SETUP_ASSISTANT_POLL_SECONDS");
+    var enabled = true;
+    var pollSeconds = 5;
+
+    if (!string.IsNullOrWhiteSpace(enabledRaw) &&
+        !bool.TryParse(enabledRaw, out enabled))
+    {
+        throw new InvalidOperationException("TELEGRAM_SETUP_ASSISTANT_ENABLED must be true or false.");
+    }
+
+    if (!string.IsNullOrWhiteSpace(pollRaw) &&
+        !int.TryParse(pollRaw, out pollSeconds))
+    {
+        throw new InvalidOperationException("TELEGRAM_SETUP_ASSISTANT_POLL_SECONDS must be an integer.");
+    }
+
+    if (pollSeconds < 1 || pollSeconds > 60)
+    {
+        throw new InvalidOperationException("TELEGRAM_SETUP_ASSISTANT_POLL_SECONDS must be between 1 and 60.");
+    }
+
+    if (!enabled ||
+        string.IsNullOrWhiteSpace(telegramToken) ||
+        string.IsNullOrWhiteSpace(telegramChatId))
+    {
+        return null;
+    }
+
+    return new TelegramSetupAssistant(telegramToken, telegramChatId, logger, pollSeconds);
 }
 
 /// <summary>

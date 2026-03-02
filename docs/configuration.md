@@ -16,6 +16,8 @@ Dedicated environment variables (not `GUARDIAN_`) are used for notifications and
 
 - `TELEGRAM_TOKEN`
 - `TELEGRAM_CHAT_ID`
+- `TELEGRAM_SETUP_ASSISTANT_ENABLED` (optional, default `true`)
+- `TELEGRAM_SETUP_ASSISTANT_POLL_SECONDS` (optional, default `5`, valid `1..60`)
 - `WEBHOOK_URL`
 - `WEBHOOK_AUTH_HEADER`
 - `WEBHOOK_AUTH_VALUE`
@@ -64,6 +66,11 @@ Required:
 - `TELEGRAM_TOKEN`
 - `TELEGRAM_CHAT_ID`
 
+Optional setup assistant controls:
+
+- `TELEGRAM_SETUP_ASSISTANT_ENABLED=true|false`
+- `TELEGRAM_SETUP_ASSISTANT_POLL_SECONDS=5`
+
 ### Webhook
 
 Required:
@@ -90,6 +97,21 @@ Webhook payload shape:
 - If both Telegram and webhook are configured, both are used.
 - Retry policy applies per channel.
 - If one channel fails, cycle delivery is marked failed.
+
+## Telegram Setup Assistant
+
+- Runs only when:
+  - `TELEGRAM_TOKEN` + `TELEGRAM_CHAT_ID` are configured
+  - `ScanIntervalSeconds > 0` (interval mode)
+  - `TELEGRAM_SETUP_ASSISTANT_ENABLED` is not set to `false`
+- It listens for stack messages like:
+  - `My application is Angular`
+  - `My app is Next.js`
+  - `We are using Blazor`
+- It replies with server prerequisite analysis and missing resources.
+- If you reply `okay`, it starts predefined setup commands for missing resources.
+- `steps` prints commands without executing.
+- `cancel` discards the pending setup plan.
 
 ## AI Behavior
 

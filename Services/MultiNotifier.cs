@@ -25,19 +25,24 @@ public class MultiNotifier : INotifier
     /// </summary>
     public async Task SendAsync(string message)
     {
-        var errors = new List<Exception>();
-
-        foreach (var notifier in _notifiers)
+        var sendTasks = _notifiers.Select(async notifier =>
         {
             try
             {
                 await notifier.SendAsync(message);
+                return null;
             }
             catch (Exception ex)
             {
-                errors.Add(ex);
+                return ex;
             }
-        }
+        });
+
+        var taskResults = await Task.WhenAll(sendTasks);
+        var errors = taskResults
+            .Where(static ex => ex is not null)
+            .Cast<Exception>()
+            .ToList();
 
         if (errors.Count > 0)
         {

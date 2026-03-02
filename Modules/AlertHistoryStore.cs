@@ -8,6 +8,8 @@ public class AlertHistoryStore
     private readonly string _historyFilePath;
     private readonly int _maxEntries;
     private readonly object _lock = new();
+    private readonly Queue<string> _recentLines;
+    private int _lineCount;
 
     /// <summary>
     /// Creates an alert history store backed by a JSONL file with max entry retention.
@@ -16,6 +18,8 @@ public class AlertHistoryStore
     {
         _historyFilePath = historyFilePath;
         _maxEntries = Math.Max(1, maxEntries);
+        _recentLines = new Queue<string>(_maxEntries);
+        _lineCount = InitializeStateFromFile();
     }
 
     /// <summary>
@@ -34,9 +38,23 @@ public class AlertHistoryStore
                 }
 
                 var line = JsonSerializer.Serialize(entry);
-                File.AppendAllText(_historyFilePath, line + Environment.NewLine);
+                if (_lineCount < _maxEntries)
+                {
+                    File.AppendAllText(_historyFilePath, line + Environment.NewLine);
+                    _recentLines.Enqueue(line);
+                    _lineCount++;
+                    return;
+                }
 
-                TrimIfNeeded();
+                // Keep strict max retention by rewriting only the rolling tail in memory.
+                _recentLines.Enqueue(line);
+                while (_recentLines.Count > _maxEntries)
+                {
+                    _recentLines.Dequeue();
+                }
+
+                File.WriteAllLines(_historyFilePath, _recentLines);
+                _lineCount = _recentLines.Count;
             }
             catch
             {
@@ -46,22 +64,47 @@ public class AlertHistoryStore
     }
 
     /// <summary>
-    /// Trims oldest history entries when file exceeds configured retention size.
+    /// Loads current history line count and tail cache from disk.
     /// </summary>
-    private void TrimIfNeeded()
+    private int InitializeStateFromFile()
     {
         if (!File.Exists(_historyFilePath))
         {
-            return;
+            return 0;
         }
 
-        var lines = File.ReadAllLines(_historyFilePath);
-        if (lines.Length <= _maxEntries)
+        try
         {
-            return;
-        }
+            var lineCount = 0;
+            foreach (var line in File.ReadLines(_historyFilePath))
+            {
+                lineCount++;
+                _recentLines.Enqueue(line);
+                if (_recentLines.Count > _maxEntries)
+                {
+                    _recentLines.Dequeue();
+                }
+            }
 
-        var trimmed = lines.TakeLast(_maxEntries).ToArray();
-        File.WriteAllLines(_historyFilePath, trimmed);
+            if (lineCount > _maxEntries)
+            {
+                // Normalize oversized history once on startup.
+                var directory = Path.GetDirectoryName(_historyFilePath);
+                if (!string.IsNullOrWhiteSpace(directory))
+                {
+                    Directory.CreateDirectory(directory);
+                }
+
+                File.WriteAllLines(_historyFilePath, _recentLines);
+                return _recentLines.Count;
+            }
+
+            return lineCount;
+        }
+        catch
+        {
+            _recentLines.Clear();
+            return 0;
+        }
     }
 }

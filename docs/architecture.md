@@ -29,6 +29,7 @@
   - Alert policy classes evaluated each cycle.
 - `Services/`
   - Notification transports and wrappers (`Telegram`, `Webhook`, `Retrying`, `MultiNotifier`).
+  - Telegram inbound setup assistant (`TelegramSetupAssistant`) for stack-driven readiness checks and gated setup execution.
 - `Models/`
   - Data models for context, alerts, reports, options, persistence.
 - `Utils/`
@@ -80,6 +81,15 @@
 - Each channel is wrapped in `RetryingNotifier`.
 - If multiple channels are configured, `MultiNotifier` fan-outs to all.
 - If any channel fails in fan-out, send is considered failed for that cycle.
+
+## Telegram Setup Assistant Pipeline
+
+- Polls Telegram Bot API `getUpdates` in interval mode.
+- Accepts stack messages (Angular/React/Next.js/Blazor/ASP.NET Core/Vue/Node.js).
+- Builds server prerequisite status using platform-aware command probes.
+- Returns readiness report and waits for explicit `okay`.
+- Executes predefined setup commands only after confirmation.
+- Supports `steps` (show commands) and `cancel` (discard plan).
 
 ## Persistence Files
 
