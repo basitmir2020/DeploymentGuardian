@@ -7,9 +7,7 @@
 - Optional:
   - Telegram bot credentials for alert delivery tests
   - Webhook endpoint for integration tests
-  - `OPENAI_API_KEY` for AI suggestion path
-  - Ollama server + pulled model for local AI suggestion path
-  - llama.cpp `llama-server` endpoint + loaded model for local AI suggestion path
+  - Ollama server + pulled `qwen2.5:0.5b` model for AI suggestions
 
 ## Build And Test
 
@@ -74,9 +72,10 @@ dotnet test DeploymentGuardian.Tests/DeploymentGuardian.Tests.csproj
 ## AI Advisor Extension Pattern
 
 - Implement `IAiAdvisor` in `Abstractions/`.
-- Add provider class in `Modules/` (for example `OpenAiAdvisor`, `OllamaAdvisor`, `LlamaCppAdvisor`).
-- Wire selection logic in `BuildAiAdvisor(...)` in `Program.cs`.
-- Keep provider validation explicit in `ValidateOptions(...)`.
+- Keep Ollama integration in `BuildAiAdvisor(...)` in `Program.cs`.
+- Endpoint and timeout should come from dedicated env vars:
+  - `OLLAMA_BASE_URL`
+  - `OLLAMA_TIMEOUT_SECONDS`
 - Keep summary contract compatible with `BuildAdvisorSummary(...)`.
 
 ## Coding Expectations
@@ -88,5 +87,5 @@ dotnet test DeploymentGuardian.Tests/DeploymentGuardian.Tests.csproj
   - parser logic
   - dedup behavior
   - notifier behavior
-  - AI provider selection/validation behavior
+  - AI suggestion behavior and timeout handling
   - any new rule threshold logic

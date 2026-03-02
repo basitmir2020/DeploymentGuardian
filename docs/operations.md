@@ -67,21 +67,10 @@ If no channels are configured, app logs:
 
 Check:
 
-- Exactly one provider is enabled:
-  - `EnableOpenAiSuggestions=true` OR
-  - `EnableOllamaSuggestions=true` OR
-  - `EnableLlamaCppSuggestions=true`
-- OpenAI path:
-  - `OPENAI_API_KEY` exists
-- Ollama path:
-  - Ollama server reachable at `OllamaBaseUrl`
-  - model exists (`ollama pull <model>`)
-- llama.cpp path:
-  - `llama-server` reachable at `LlamaCppBaseUrl`
-  - model is loaded via `-m <model.gguf>`
-  - if protected, `LLAMACPP_API_KEY` is set for the app
-
-If more than one provider is enabled, startup validation fails.
+- Ollama service reachable at `OLLAMA_BASE_URL` (default `http://127.0.0.1:11434`)
+- model exists: `ollama pull qwen2.5:0.5b`
+- timeout is high enough on slower CPUs:
+  - `OLLAMA_TIMEOUT_SECONDS=120` or `180`
 
 ### App exits immediately
 
@@ -92,7 +81,7 @@ If more than one provider is enabled, startup validation fails.
 ### Config validation fails at startup
 
 - App fails fast with a list of invalid keys/ranges.
-- Fix values in `guardian.json` or `GUARDIAN_*` overrides.
+- Fix values in `guardian.json`, `GUARDIAN_*`, or Ollama env vars.
 
 ### Repeated identical alerts are missing
 

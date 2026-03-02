@@ -5,12 +5,6 @@
   "AlertHistoryMaxEntries": 5000,
   "WebhookUrl": "",
   "WebhookAuthHeader": "Authorization",
-  "EnableOllamaSuggestions": false,
-  "OllamaBaseUrl": "http://localhost:11434",
-  "OllamaModel": "llama3.2",
-  "EnableLlamaCppSuggestions": false,
-  "LlamaCppBaseUrl": "http://localhost:8080",
-  "LlamaCppModel": "local-model",
   "CpuSpikeMultiplier": 1.5,
   "DiskUsageWarningPercent": 85,
   "RamUsageWarningPercent": 85,
@@ -23,6 +17,5 @@
   "AlertCooldownMinutes": 30,
   "NotificationMaxAttempts": 3,
   "NotificationBaseDelaySeconds": 2,
-  "ScanIntervalSeconds": 0,
-  "EnableOpenAiSuggestions": false
+  "ScanIntervalSeconds": 0
 }

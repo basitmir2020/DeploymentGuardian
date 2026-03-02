@@ -12,25 +12,15 @@ Example:
 - `GUARDIAN_RamUsageWarningPercent=90`
 - `GUARDIAN_ScanIntervalSeconds=300`
 
-Notification credentials use dedicated environment variables (not `GUARDIAN_`):
+Dedicated environment variables (not `GUARDIAN_`) are used for notifications and Ollama:
 
 - `TELEGRAM_TOKEN`
 - `TELEGRAM_CHAT_ID`
 - `WEBHOOK_URL`
 - `WEBHOOK_AUTH_HEADER`
 - `WEBHOOK_AUTH_VALUE`
-- `OPENAI_API_KEY`
-- `LLAMACPP_API_KEY` (optional, only if your llama.cpp endpoint requires Bearer auth)
-
-AI toggles and model/base-url settings still use `GUARDIAN_` prefix, for example:
-
-- `GUARDIAN_EnableOpenAiSuggestions=true`
-- `GUARDIAN_EnableOllamaSuggestions=true`
-- `GUARDIAN_OllamaBaseUrl=http://localhost:11434`
-- `GUARDIAN_OllamaModel=llama3.2`
-- `GUARDIAN_EnableLlamaCppSuggestions=true`
-- `GUARDIAN_LlamaCppBaseUrl=http://localhost:8080`
-- `GUARDIAN_LlamaCppModel=local-model`
+- `OLLAMA_BASE_URL` (optional, default `http://127.0.0.1:11434`)
+- `OLLAMA_TIMEOUT_SECONDS` (optional, default `120`, valid `5..600`)
 
 ## CLI Arguments
 
@@ -51,12 +41,6 @@ If no CLI interval is provided, `ScanIntervalSeconds` is used.
 | `AlertHistoryMaxEntries` | `5000` | `1..200000` | Max retained history entries |
 | `WebhookUrl` | `""` | absolute `http/https` when set | Optional webhook endpoint |
 | `WebhookAuthHeader` | `Authorization` | optional | Header name for webhook auth |
-| `EnableOllamaSuggestions` | `false` | only one AI provider can be enabled | Enables local Ollama AI suggestions |
-| `OllamaBaseUrl` | `http://localhost:11434` | absolute `http/https` when Ollama enabled | Ollama server URL |
-| `OllamaModel` | `llama3.2` | required when Ollama enabled | Ollama model name |
-| `EnableLlamaCppSuggestions` | `false` | only one AI provider can be enabled | Enables local llama.cpp AI suggestions |
-| `LlamaCppBaseUrl` | `http://localhost:8080` | absolute `http/https` when llama.cpp enabled | llama.cpp server URL |
-| `LlamaCppModel` | `local-model` | required when llama.cpp enabled | Model value passed to `/v1/chat/completions` |
 | `CpuSpikeMultiplier` | `1.5` | `1..10` | CPU load vs cores critical multiplier |
 | `DiskUsageWarningPercent` | `85` | `1..100` | Disk warning threshold |
 | `RamUsageWarningPercent` | `85` | `1..100` | RAM warning threshold |
@@ -70,7 +54,6 @@ If no CLI interval is provided, `ScanIntervalSeconds` is used.
 | `NotificationMaxAttempts` | `3` | `1..10` | Retry attempts per channel |
 | `NotificationBaseDelaySeconds` | `2` | `1..60` | Base exponential backoff delay |
 | `ScanIntervalSeconds` | `0` | `0..86400` | `0` means single-run mode |
-| `EnableOpenAiSuggestions` | `false` | requires `OPENAI_API_KEY` when true | Append AI remediation notes |
 
 ## Notification Configuration
 
@@ -108,20 +91,13 @@ Webhook payload shape:
 - Retry policy applies per channel.
 - If one channel fails, cycle delivery is marked failed.
 
-## AI Provider Behavior
+## AI Behavior
 
-- `EnableOpenAiSuggestions=true` uses `OpenAiAdvisor`.
-- `EnableOllamaSuggestions=true` uses `OllamaAdvisor`.
-- `EnableLlamaCppSuggestions=true` uses `LlamaCppAdvisor`.
-- You can enable only one provider at the same time.
-- OpenAI requires `OPENAI_API_KEY`.
-- Ollama requires:
-  - `OllamaBaseUrl` (for example `http://localhost:11434`)
-  - `OllamaModel` (for example `llama3.2`)
-- llama.cpp requires:
-  - `LlamaCppBaseUrl` (for example `http://localhost:8080`)
-  - `LlamaCppModel` (for example `local-model`)
-  - optional `LLAMACPP_API_KEY` when endpoint auth is enabled
+- AI provider is Ollama only.
+- Model is fixed in code to: `qwen2.5:0.5b`.
+- Runtime values are read from dedicated env vars:
+  - `OLLAMA_BASE_URL` (default `http://127.0.0.1:11434`)
+  - `OLLAMA_TIMEOUT_SECONDS` (default `120`)
 
 ## Alert Timestamp Format
 
@@ -140,12 +116,6 @@ Alert messages print timestamp in UTC using:
   "AlertHistoryMaxEntries": 5000,
   "WebhookUrl": "",
   "WebhookAuthHeader": "Authorization",
-  "EnableOllamaSuggestions": false,
-  "OllamaBaseUrl": "http://localhost:11434",
-  "OllamaModel": "llama3.2",
-  "EnableLlamaCppSuggestions": false,
-  "LlamaCppBaseUrl": "http://localhost:8080",
-  "LlamaCppModel": "local-model",
   "CpuSpikeMultiplier": 1.5,
   "DiskUsageWarningPercent": 85,
   "RamUsageWarningPercent": 85,
@@ -158,7 +128,6 @@ Alert messages print timestamp in UTC using:
   "AlertCooldownMinutes": 30,
   "NotificationMaxAttempts": 3,
   "NotificationBaseDelaySeconds": 2,
-  "ScanIntervalSeconds": 0,
-  "EnableOpenAiSuggestions": false
+  "ScanIntervalSeconds": 0
 }
 ```

@@ -36,11 +36,10 @@ Deployment Guardian is a .NET 10 monitoring and alerting app for Linux and Windo
   - Top process snapshot
   - Per-alert evidence
   - Suggested fix actions
-- Optionally appends AI suggestions from:
-  - OpenAI (`EnableOpenAiSuggestions=true` + `OPENAI_API_KEY`)
-  - Ollama local models (`EnableOllamaSuggestions=true` + `OllamaBaseUrl` + `OllamaModel`)
-  - llama.cpp local server (`EnableLlamaCppSuggestions=true` + `LlamaCppBaseUrl` + `LlamaCppModel`)
-  - Exactly one AI provider can be enabled at a time
+- Appends AI suggestions from local Ollama only:
+  - Fixed model: `qwen2.5:0.5b`
+  - Endpoint from env: `OLLAMA_BASE_URL` (default `http://127.0.0.1:11434`)
+  - Timeout from env: `OLLAMA_TIMEOUT_SECONDS` (default `120`)
 - Sends notifications to:
   - Telegram
   - Webhook
@@ -56,3 +55,4 @@ Deployment Guardian is a .NET 10 monitoring and alerting app for Linux and Windo
 - [Operations Guide](./operations.md)
 - [Development Guide](./development.md)
 - [Install Guide](./install.md)
+- [Ollama qwen2.5:0.5b Setup](./ollama-qwen2.5-0.5b.md)

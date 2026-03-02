@@ -89,7 +89,7 @@ var riskCalculator = new RiskCalculator(
 
 var appAnalyzer = new AppAnalyzer();
 var appProfile = appAnalyzer.Analyze();
-var aiAdvisor = BuildAiAdvisor(options);
+var aiAdvisor = BuildAiAdvisor();
 
 var rules = new List<IRule<ServerContext>>
 {
@@ -610,27 +610,34 @@ static AlertHistoryEntry BuildHistoryEntry(
 }
 
 /// <summary>
-/// Creates AI advisor instance from runtime configuration.
+/// Creates Ollama AI advisor from dedicated environment variables.
 /// </summary>
-static IAiAdvisor? BuildAiAdvisor(GuardianOptions options)
+static IAiAdvisor BuildAiAdvisor()
 {
-    if (options.EnableOpenAiSuggestions)
+    const string model = "qwen2.5:0.5b";
+    var ollamaBaseUrl = FirstNonEmpty(
+        Environment.GetEnvironmentVariable("OLLAMA_BASE_URL"),
+        "http://127.0.0.1:11434");
+    var timeoutRaw = Environment.GetEnvironmentVariable("OLLAMA_TIMEOUT_SECONDS");
+    var timeoutSeconds = 120;
+
+    if (!string.IsNullOrWhiteSpace(timeoutRaw) &&
+        !int.TryParse(timeoutRaw, out timeoutSeconds))
     {
-        return new OpenAiAdvisor();
+        throw new InvalidOperationException("OLLAMA_TIMEOUT_SECONDS must be an integer.");
     }
 
-    if (options.EnableOllamaSuggestions)
+    if (!IsValidHttpUrl(ollamaBaseUrl))
     {
-        return new OllamaAdvisor(options.OllamaBaseUrl, options.OllamaModel);
+        throw new InvalidOperationException("OLLAMA_BASE_URL must be an absolute http/https URL.");
     }
 
-    if (options.EnableLlamaCppSuggestions)
+    if (timeoutSeconds < 5 || timeoutSeconds > 600)
     {
-        var llamaApiKey = Environment.GetEnvironmentVariable("LLAMACPP_API_KEY");
-        return new LlamaCppAdvisor(options.LlamaCppBaseUrl, options.LlamaCppModel, llamaApiKey);
+        throw new InvalidOperationException("OLLAMA_TIMEOUT_SECONDS must be between 5 and 600.");
     }
 
-    return null;
+    return new OllamaAdvisor(ollamaBaseUrl, model, timeoutSeconds);
 }
 
 /// <summary>
@@ -686,12 +693,6 @@ static GuardianOptions LoadOptions(IConfiguration configuration)
         AlertHistoryMaxEntries = GetInt(configuration, "AlertHistoryMaxEntries", 5000),
         WebhookUrl = GetString(configuration, "WebhookUrl", string.Empty),
         WebhookAuthHeader = GetString(configuration, "WebhookAuthHeader", "Authorization"),
-        EnableOllamaSuggestions = GetBool(configuration, "EnableOllamaSuggestions", false),
-        OllamaBaseUrl = GetString(configuration, "OllamaBaseUrl", "http://localhost:11434"),
-        OllamaModel = GetString(configuration, "OllamaModel", "llama3.2"),
-        EnableLlamaCppSuggestions = GetBool(configuration, "EnableLlamaCppSuggestions", false),
-        LlamaCppBaseUrl = GetString(configuration, "LlamaCppBaseUrl", "http://localhost:8080"),
-        LlamaCppModel = GetString(configuration, "LlamaCppModel", "local-model"),
         CpuSpikeMultiplier = GetDouble(configuration, "CpuSpikeMultiplier", 1.5),
         DiskUsageWarningPercent = GetDouble(configuration, "DiskUsageWarningPercent", 85),
         RamUsageWarningPercent = GetDouble(configuration, "RamUsageWarningPercent", 85),
@@ -704,8 +705,7 @@ static GuardianOptions LoadOptions(IConfiguration configuration)
         AlertCooldownMinutes = GetDouble(configuration, "AlertCooldownMinutes", 30),
         NotificationMaxAttempts = GetInt(configuration, "NotificationMaxAttempts", 3),
         NotificationBaseDelaySeconds = GetInt(configuration, "NotificationBaseDelaySeconds", 2),
-        ScanIntervalSeconds = GetInt(configuration, "ScanIntervalSeconds", 0),
-        EnableOpenAiSuggestions = GetBool(configuration, "EnableOpenAiSuggestions", false)
+        ScanIntervalSeconds = GetInt(configuration, "ScanIntervalSeconds", 0)
     };
 }
 
@@ -752,59 +752,6 @@ static void ValidateOptions(GuardianOptions options)
         errors.Add("WebhookUrl must be an absolute http/https URL.");
     }
 
-    var enabledAiProviders = 0;
-    if (options.EnableOpenAiSuggestions)
-    {
-        enabledAiProviders++;
-    }
-
-    if (options.EnableOllamaSuggestions)
-    {
-        enabledAiProviders++;
-    }
-
-    if (options.EnableLlamaCppSuggestions)
-    {
-        enabledAiProviders++;
-    }
-
-    if (enabledAiProviders > 1)
-    {
-        errors.Add("Only one AI provider can be enabled at a time: OpenAI, Ollama, or llama.cpp.");
-    }
-
-    if (options.EnableOpenAiSuggestions &&
-        string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("OPENAI_API_KEY")))
-    {
-        errors.Add("EnableOpenAiSuggestions=true requires OPENAI_API_KEY environment variable.");
-    }
-
-    if (options.EnableOllamaSuggestions)
-    {
-        if (!IsValidHttpUrl(options.OllamaBaseUrl))
-        {
-            errors.Add("EnableOllamaSuggestions=true requires a valid OllamaBaseUrl http/https URL.");
-        }
-
-        if (string.IsNullOrWhiteSpace(options.OllamaModel))
-        {
-            errors.Add("EnableOllamaSuggestions=true requires OllamaModel.");
-        }
-    }
-
-    if (options.EnableLlamaCppSuggestions)
-    {
-        if (!IsValidHttpUrl(options.LlamaCppBaseUrl))
-        {
-            errors.Add("EnableLlamaCppSuggestions=true requires a valid LlamaCppBaseUrl http/https URL.");
-        }
-
-        if (string.IsNullOrWhiteSpace(options.LlamaCppModel))
-        {
-            errors.Add("EnableLlamaCppSuggestions=true requires LlamaCppModel.");
-        }
-    }
-
     if (errors.Any())
     {
         throw new InvalidOperationException(
@@ -848,10 +795,6 @@ static GuardianOptions NormalizeOptions(GuardianOptions options)
     }
 
     options.WebhookUrl = options.WebhookUrl?.Trim() ?? string.Empty;
-    options.OllamaBaseUrl = options.OllamaBaseUrl?.Trim() ?? "http://localhost:11434";
-    options.OllamaModel = options.OllamaModel?.Trim() ?? "llama3.2";
-    options.LlamaCppBaseUrl = options.LlamaCppBaseUrl?.Trim() ?? "http://localhost:8080";
-    options.LlamaCppModel = options.LlamaCppModel?.Trim() ?? "local-model";
 
     if (string.IsNullOrWhiteSpace(options.WebhookAuthHeader))
     {
@@ -860,26 +803,6 @@ static GuardianOptions NormalizeOptions(GuardianOptions options)
     else
     {
         options.WebhookAuthHeader = options.WebhookAuthHeader.Trim();
-    }
-
-    if (string.IsNullOrWhiteSpace(options.OllamaBaseUrl))
-    {
-        options.OllamaBaseUrl = "http://localhost:11434";
-    }
-
-    if (string.IsNullOrWhiteSpace(options.OllamaModel))
-    {
-        options.OllamaModel = "llama3.2";
-    }
-
-    if (string.IsNullOrWhiteSpace(options.LlamaCppBaseUrl))
-    {
-        options.LlamaCppBaseUrl = "http://localhost:8080";
-    }
-
-    if (string.IsNullOrWhiteSpace(options.LlamaCppModel))
-    {
-        options.LlamaCppModel = "local-model";
     }
 
     return options;
@@ -991,15 +914,6 @@ static int GetInt(IConfiguration configuration, string key, int defaultValue)
 {
     var value = configuration[key];
     return int.TryParse(value, out var parsed) ? parsed : defaultValue;
-}
-
-/// <summary>
-/// Reads a boolean configuration value and falls back on parse failure.
-/// </summary>
-static bool GetBool(IConfiguration configuration, string key, bool defaultValue)
-{
-    var value = configuration[key];
-    return bool.TryParse(value, out var parsed) ? parsed : defaultValue;
 }
 
 /// <summary>

@@ -13,7 +13,7 @@
 7. Risk score is calculated.
 8. Alerts are cooldown-filtered (dedup).
 9. Detailed message is generated (human-readable UTC timestamp, evidence, fix actions).
-10. Optional AI guidance is appended (OpenAI, Ollama, or llama.cpp).
+10. AI guidance is appended from local Ollama.
 11. Message is sent through configured notifier(s).
 12. Delivery state and history are persisted.
 
@@ -66,11 +66,11 @@
 ## AI Advisor Pipeline
 
 - `IAiAdvisor` is the shared abstraction used by alert message enrichment.
-- `BuildAiAdvisor(...)` in `Program.cs` selects provider:
-  - OpenAI when `EnableOpenAiSuggestions=true`
-  - Ollama when `EnableOllamaSuggestions=true`
-  - llama.cpp when `EnableLlamaCppSuggestions=true`
-- Validation enforces mutual exclusivity so only one provider can be enabled simultaneously.
+- `BuildAiAdvisor(...)` in `Program.cs` always builds `OllamaAdvisor`.
+- Model is fixed to `qwen2.5:0.5b`.
+- Runtime endpoint and timeout come from env vars:
+  - `OLLAMA_BASE_URL`
+  - `OLLAMA_TIMEOUT_SECONDS`
 
 ## Notification Pipeline
 

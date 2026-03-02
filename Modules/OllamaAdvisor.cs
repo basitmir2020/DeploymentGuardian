@@ -6,18 +6,14 @@ namespace DeploymentGuardian.Modules;
 
 public class OllamaAdvisor : IAiAdvisor
 {
-    private static readonly HttpClient HttpClient = new()
-    {
-        Timeout = TimeSpan.FromSeconds(30)
-    };
-
+    private readonly HttpClient _httpClient;
     private readonly Uri _chatEndpoint;
     private readonly string _model;
 
     /// <summary>
     /// Creates an Ollama advisor using local endpoint and model name.
     /// </summary>
-    public OllamaAdvisor(string baseUrl, string model)
+    public OllamaAdvisor(string baseUrl, string model, int timeoutSeconds = 120)
     {
         if (string.IsNullOrWhiteSpace(baseUrl))
         {
@@ -35,8 +31,17 @@ public class OllamaAdvisor : IAiAdvisor
             throw new ArgumentException("Ollama model is required.", nameof(model));
         }
 
+        if (timeoutSeconds < 5 || timeoutSeconds > 600)
+        {
+            throw new ArgumentOutOfRangeException(nameof(timeoutSeconds), "Ollama timeout must be between 5 and 600 seconds.");
+        }
+
         _chatEndpoint = new Uri(parsedBaseUrl, "/api/chat");
         _model = model.Trim();
+        _httpClient = new HttpClient
+        {
+            Timeout = TimeSpan.FromSeconds(timeoutSeconds)
+        };
     }
 
     /// <summary>
@@ -76,7 +81,7 @@ public class OllamaAdvisor : IAiAdvisor
                 "application/json")
         };
 
-        var response = await HttpClient.SendAsync(request);
+        var response = await _httpClient.SendAsync(request);
         response.EnsureSuccessStatusCode();
 
         var json = await response.Content.ReadAsStringAsync();
