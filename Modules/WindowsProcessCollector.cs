@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using DeploymentGuardian.Abstractions;
 using DeploymentGuardian.Models;
 
@@ -13,29 +12,23 @@ public class WindowsProcessCollector : IProcessDataCollector
     {
         try
         {
-            var first = CaptureSnapshot();
-            var start = Stopwatch.StartNew();
-            Thread.Sleep(300);
-            var second = CaptureSnapshot();
-            start.Stop();
-
-            if (start.Elapsed.TotalMilliseconds <= 0 || Environment.ProcessorCount <= 0)
+            if (!WindowsCollectorUtils.TryGetProcessCpuWindow(out var sample) || Environment.ProcessorCount <= 0)
             {
                 return new List<ProcessInfo>();
             }
 
             var totalMemoryBytes = GetTotalMemoryBytes();
-            var data = new List<ProcessInfo>();
+            var data = new List<ProcessInfo>(Math.Min(sample.SecondSnapshots.Count, 32));
 
-            foreach (var current in second)
+            foreach (var current in sample.SecondSnapshots)
             {
-                if (!first.TryGetValue(current.Key, out var previous))
+                if (!sample.FirstSnapshots.TryGetValue(current.Key, out var previous))
                 {
                     continue;
                 }
 
-                var cpuDeltaMs = current.Value.CpuMs - previous.CpuMs;
-                var cpuPercent = cpuDeltaMs / (Environment.ProcessorCount * start.Elapsed.TotalMilliseconds) * 100.0;
+                var cpuDeltaMs = current.Value.CpuMilliseconds - previous.CpuMilliseconds;
+                var cpuPercent = cpuDeltaMs / (Environment.ProcessorCount * sample.ElapsedMilliseconds) * 100.0;
                 var memoryPercent = totalMemoryBytes <= 0
                     ? 0
                     : current.Value.WorkingSetBytes / totalMemoryBytes * 100.0;
@@ -60,35 +53,6 @@ public class WindowsProcessCollector : IProcessDataCollector
     }
 
     /// <summary>
-    /// Captures process CPU time and working-set memory snapshot.
-    /// </summary>
-    private static Dictionary<int, ProcessSnapshot> CaptureSnapshot()
-    {
-        var snapshots = new Dictionary<int, ProcessSnapshot>();
-
-        foreach (var process in Process.GetProcesses())
-        {
-            try
-            {
-                snapshots[process.Id] = new ProcessSnapshot(
-                    process.ProcessName,
-                    process.TotalProcessorTime.TotalMilliseconds,
-                    process.WorkingSet64);
-            }
-            catch
-            {
-                // Ignore restricted or terminated processes.
-            }
-            finally
-            {
-                process.Dispose();
-            }
-        }
-
-        return snapshots;
-    }
-
-    /// <summary>
     /// Reads total physical memory bytes on Windows.
     /// </summary>
     private static double GetTotalMemoryBytes()
@@ -97,6 +61,4 @@ public class WindowsProcessCollector : IProcessDataCollector
             ? total
             : 0;
     }
-
-    private readonly record struct ProcessSnapshot(string Name, double CpuMs, double WorkingSetBytes);
 }

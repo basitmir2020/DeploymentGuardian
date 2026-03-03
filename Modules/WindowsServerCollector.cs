@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using DeploymentGuardian.Abstractions;
 using DeploymentGuardian.Models;
 
@@ -30,19 +29,13 @@ public class WindowsServerCollector : IServerDataCollector
     {
         try
         {
-            var firstSample = SnapshotTotalProcessCpuMs();
-            var stopwatch = Stopwatch.StartNew();
-            Thread.Sleep(300);
-            var secondSample = SnapshotTotalProcessCpuMs();
-            stopwatch.Stop();
-
-            if (stopwatch.Elapsed.TotalMilliseconds <= 0 || Environment.ProcessorCount <= 0)
+            if (!WindowsCollectorUtils.TryGetProcessCpuWindow(out var sample) || Environment.ProcessorCount <= 0)
             {
                 return 0;
             }
 
-            var cpuDeltaMs = secondSample - firstSample;
-            var usage = cpuDeltaMs / (Environment.ProcessorCount * stopwatch.Elapsed.TotalMilliseconds) * 100.0;
+            var usage = sample.TotalCpuDeltaMilliseconds /
+                        (Environment.ProcessorCount * sample.ElapsedMilliseconds) * 100.0;
             return Math.Clamp(usage, 0, 100);
         }
         catch
@@ -110,30 +103,5 @@ public class WindowsServerCollector : IServerDataCollector
         {
             return false;
         }
-    }
-
-    /// <summary>
-    /// Captures total CPU time consumed by all processes in milliseconds.
-    /// </summary>
-    private static double SnapshotTotalProcessCpuMs()
-    {
-        var total = 0.0;
-        foreach (var process in Process.GetProcesses())
-        {
-            try
-            {
-                total += process.TotalProcessorTime.TotalMilliseconds;
-            }
-            catch
-            {
-                // Ignore short-lived or permission-restricted processes.
-            }
-            finally
-            {
-                process.Dispose();
-            }
-        }
-
-        return total;
     }
 }

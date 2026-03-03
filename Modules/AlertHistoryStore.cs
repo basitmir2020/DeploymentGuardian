@@ -10,6 +10,7 @@ public class AlertHistoryStore
     private readonly object _lock = new();
     private readonly Queue<string> _recentLines;
     private int _lineCount;
+    private readonly int _compactionThreshold;
 
     /// <summary>
     /// Creates an alert history store backed by a JSONL file with max entry retention.
@@ -18,6 +19,7 @@ public class AlertHistoryStore
     {
         _historyFilePath = historyFilePath;
         _maxEntries = Math.Max(1, maxEntries);
+        _compactionThreshold = Math.Max(1, Math.Min(500, _maxEntries / 10));
         _recentLines = new Queue<string>(_maxEntries);
         _lineCount = InitializeStateFromFile();
     }
@@ -46,15 +48,18 @@ public class AlertHistoryStore
                     return;
                 }
 
-                // Keep strict max retention by rewriting only the rolling tail in memory.
+                File.AppendAllText(_historyFilePath, line + Environment.NewLine);
+                _lineCount++;
                 _recentLines.Enqueue(line);
                 while (_recentLines.Count > _maxEntries)
                 {
                     _recentLines.Dequeue();
                 }
 
-                File.WriteAllLines(_historyFilePath, _recentLines);
-                _lineCount = _recentLines.Count;
+                if (_lineCount >= _maxEntries + _compactionThreshold)
+                {
+                    CompactHistoryFile();
+                }
             }
             catch
             {
@@ -89,14 +94,8 @@ public class AlertHistoryStore
             if (lineCount > _maxEntries)
             {
                 // Normalize oversized history once on startup.
-                var directory = Path.GetDirectoryName(_historyFilePath);
-                if (!string.IsNullOrWhiteSpace(directory))
-                {
-                    Directory.CreateDirectory(directory);
-                }
-
-                File.WriteAllLines(_historyFilePath, _recentLines);
-                return _recentLines.Count;
+                CompactHistoryFile();
+                return _lineCount;
             }
 
             return lineCount;
@@ -106,5 +105,17 @@ public class AlertHistoryStore
             _recentLines.Clear();
             return 0;
         }
+    }
+
+    private void CompactHistoryFile()
+    {
+        var directory = Path.GetDirectoryName(_historyFilePath);
+        if (!string.IsNullOrWhiteSpace(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        File.WriteAllLines(_historyFilePath, _recentLines);
+        _lineCount = _recentLines.Count;
     }
 }
