@@ -7,6 +7,11 @@ namespace DeploymentGuardian.Modules;
 
 public class WindowsSecurityCollector : ISecurityDataCollector
 {
+    private static readonly TimeSpan FirewallCacheTtl = TimeSpan.FromSeconds(60);
+    private static readonly object FirewallCacheLock = new();
+    private static DateTimeOffset _firewallCachedAtUtc = DateTimeOffset.MinValue;
+    private static bool _cachedFirewallEnabled;
+
     /// <summary>
     /// Collects Windows security posture data where equivalent checks are available.
     /// </summary>
@@ -26,6 +31,28 @@ public class WindowsSecurityCollector : ISecurityDataCollector
     /// Checks whether any Windows firewall profile is ON.
     /// </summary>
     private static bool IsFirewallEnabled()
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (now - _firewallCachedAtUtc < FirewallCacheTtl)
+        {
+            return _cachedFirewallEnabled;
+        }
+
+        lock (FirewallCacheLock)
+        {
+            now = DateTimeOffset.UtcNow;
+            if (now - _firewallCachedAtUtc < FirewallCacheTtl)
+            {
+                return _cachedFirewallEnabled;
+            }
+
+            _cachedFirewallEnabled = ReadFirewallEnabled();
+            _firewallCachedAtUtc = now;
+            return _cachedFirewallEnabled;
+        }
+    }
+
+    private static bool ReadFirewallEnabled()
     {
         try
         {

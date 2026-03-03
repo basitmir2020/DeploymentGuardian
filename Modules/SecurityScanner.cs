@@ -74,29 +74,38 @@ public class SecurityScanner : IAnalyzer<SecurityReport>, ISecurityDataCollector
     /// </summary>
     private List<int> GetOpenPorts()
     {
-        var result = SafeRun("ss -tulpn | grep LISTEN");
-        var ports = new List<int>();
+        var result = SafeRun("ss -H -ltnu");
+        if (string.IsNullOrWhiteSpace(result))
+        {
+            return new List<int>();
+        }
 
-        var lines = result.Split('\n');
+        var ports = new HashSet<int>();
+        var lines = result.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
         foreach (var line in lines)
         {
             var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-
-            foreach (var part in parts)
+            if (parts.Length < 5)
             {
-                if (part.Contains(":"))
-                {
-                    var portStr = part.Split(':').Last();
-                    if (int.TryParse(portStr, out int port))
-                    {
-                        ports.Add(port);
-                    }
-                }
+                continue;
+            }
+
+            var localAddress = parts[4];
+            var separatorIndex = localAddress.LastIndexOf(':');
+            if (separatorIndex < 0 || separatorIndex == localAddress.Length - 1)
+            {
+                continue;
+            }
+
+            var portToken = localAddress[(separatorIndex + 1)..];
+            if (int.TryParse(portToken, out var port))
+            {
+                ports.Add(port);
             }
         }
 
-        return ports.Distinct().ToList();
+        return ports.ToList();
     }
 
     /// <summary>

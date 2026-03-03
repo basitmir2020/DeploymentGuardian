@@ -86,7 +86,7 @@ public class OpenAiAdvisor : IAiAdvisor
             throw new InvalidOperationException("OPENAI_API_KEY is not configured.");
         }
 
-        var request = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/chat/completions")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/chat/completions")
         {
             Content = new StringContent(
                 JsonSerializer.Serialize(payload),
@@ -134,7 +134,7 @@ public class OpenAiAdvisor : IAiAdvisor
     {
         if (string.IsNullOrWhiteSpace(_apiKey)) throw new InvalidOperationException("OPENAI_API_KEY is not configured.");
 
-        var request = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/chat/completions")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/chat/completions")
         {
             Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json")
         };

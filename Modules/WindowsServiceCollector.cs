@@ -16,7 +16,7 @@ public class WindowsServiceCollector : IServiceDataCollector
             var psi = new ProcessStartInfo
             {
                 FileName = "sc",
-                Arguments = "query type= service state= all",
+                Arguments = "query type= service state= running",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
@@ -30,7 +30,19 @@ public class WindowsServiceCollector : IServiceDataCollector
             }
 
             var output = process.StandardOutput.ReadToEnd();
-            process.WaitForExit(5000);
+            if (!process.WaitForExit(5000))
+            {
+                try
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                    // Ignore kill failures on timeout.
+                }
+
+                return new ServiceReport();
+            }
 
             return new ServiceReport
             {
