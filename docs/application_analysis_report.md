@@ -21,5 +21,30 @@ DeploymentGuardian is a robust, lightweight, and extensible cross-platform serve
 - **Hardcoded Model Binding:** The architecture states that default behavior binds to `qwen2.5:0.5b`. Making the AI model fully configurable via `GuardianOptions` rather than strictly code-driven would increase flexibility for users with more substantial hardware resources who might want to run larger models like `llama3`.
 - **Parsing Fragility on Probes:** Relying on parsing `stdout` of tools like `df` or `free` can sometimes be fragile due to localization or different utility versions across Linux distributions. Using native syscalls or reliable cross-platform .NET APIs (where applicable) might offer more stability.
 
+## Optimization Update (March 2026)
+
+Recent performance hardening focused on runtime overhead and collector efficiency:
+
+- Reduced repeated disk I/O:
+  - `MemoryTrendAnalyzer` now keeps a rolling in-memory window after initial load.
+  - `AlertHistoryStore` now appends normally and compacts periodically instead of rewriting on every full-capacity append.
+- Reduced Windows collector duplication:
+  - Shared process CPU sampling window across `WindowsServerCollector` and `WindowsProcessCollector`.
+  - Added short-lived cache for physical memory probe results.
+- Reduced command execution bottlenecks:
+  - `ShellHelper` and Telegram assistant command runner now read stdout/stderr asynchronously to avoid blocking patterns.
+- Reduced Windows exception churn:
+  - Temporarily skip recently inaccessible process IDs during snapshot capture.
+  - Increased process-window cache TTL to reduce repeated sampling pressure.
+
+### Profiling Snapshot
+
+Using `dotnet-counters` and `dotnet-trace` on 20-second interval runs:
+
+- Process memory stayed roughly around ~40-52 MB working set.
+- CPU remained low in steady state (mostly waiting between cycles).
+- GC pressure remained low (no Gen2 collections in sample windows).
+- Remaining overhead is primarily expected wait states and OS-level process access handling on Windows.
+
 ## Conclusion
 DeploymentGuardian is a well-structured, modern .NET application. It successfully bridges the gap between passive monitoring (like Nagios or Zabbix) and active administration by incorporating on-device LLMs. Its clean architecture ensures high maintainability. With some extra hardening around command execution and expanded Windows parity, it represents a highly valuable utility for small to medium server fleets prioritizing privacy and AI-assisted DevOps.

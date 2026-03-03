@@ -46,6 +46,21 @@ Alert history is JSONL, one cycle per line.
   - `No alerts.`
   - or sent alert count with risk score.
 
+### Runtime Profiling (On Demand)
+
+Capture 20 seconds of runtime counters:
+
+```bash
+dotnet-counters collect --duration 00:00:20 --refresh-interval 1 --format csv --output profiler-counters-interval.csv --counters System.Runtime -- .\bin\Debug\net10.0\DeploymentGuardian.exe --interval 1s
+```
+
+Capture 20 seconds of sample-based trace:
+
+```bash
+dotnet-trace collect --duration 00:00:20 --output profiler-interval.nettrace --providers Microsoft-DotNETCore-SampleProfiler,Microsoft-Windows-DotNETRuntime:0x4c14fccbd:5 -- .\bin\Debug\net10.0\DeploymentGuardian.exe --interval 1s
+dotnet-trace report profiler-interval.nettrace topN -n 20
+```
+
 ## Troubleshooting
 
 ### No notifications are sent
@@ -99,6 +114,15 @@ Check:
 ### Windows path issues with `/tmp` defaults
 
 - Override file paths in config for Windows-friendly locations.
+
+### High Win32Exception rate on Windows
+
+- Process metrics sampling may encounter permission-restricted processes.
+- Current collector mitigates churn by:
+  - sharing one process-sampling window across Windows collectors
+  - caching process windows for short intervals
+  - temporarily skipping recently inaccessible PIDs
+- If rate is still high in your environment, increase `ScanIntervalSeconds`.
 
 ## Safe Maintenance
 

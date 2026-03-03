@@ -11,11 +11,14 @@ internal static class WindowsCollectorUtils
     private static double _cachedTotalBytes;
     private static double _cachedFreeBytes;
     private static bool _hasMemoryCache;
-    private static readonly TimeSpan ProcessWindowCacheTtl = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan ProcessWindowCacheTtl = TimeSpan.FromSeconds(3);
     private static readonly object ProcessWindowCacheLock = new();
     private static DateTimeOffset _processWindowCachedAtUtc = DateTimeOffset.MinValue;
     private static ProcessCpuWindow _cachedProcessWindow;
     private static bool _hasProcessWindowCache;
+    private static readonly TimeSpan InaccessibleProcessTtl = TimeSpan.FromMinutes(1);
+    private static readonly object InaccessibleProcessLock = new();
+    private static readonly Dictionary<int, DateTimeOffset> InaccessibleProcessUntilUtc = new();
 
     /// <summary>
     /// Attempts to read total/free physical memory bytes from Win32_OperatingSystem.
@@ -128,11 +131,20 @@ internal static class WindowsCollectorUtils
     private static Dictionary<int, ProcessSnapshot> CaptureProcessSnapshot()
     {
         var snapshots = new Dictionary<int, ProcessSnapshot>();
+        var now = DateTimeOffset.UtcNow;
+        PruneInaccessibleProcesses(now);
 
         foreach (var process in Process.GetProcesses())
         {
+            var pid = 0;
             try
             {
+                pid = process.Id;
+                if (pid <= 4 || IsInaccessibleProcess(pid, now))
+                {
+                    continue;
+                }
+
                 snapshots[process.Id] = new ProcessSnapshot(
                     process.ProcessName,
                     process.TotalProcessorTime.TotalMilliseconds,
@@ -140,7 +152,10 @@ internal static class WindowsCollectorUtils
             }
             catch
             {
-                // Ignore restricted or short-lived processes.
+                if (pid > 0)
+                {
+                    MarkInaccessibleProcess(pid, now);
+                }
             }
             finally
             {
@@ -149,6 +164,43 @@ internal static class WindowsCollectorUtils
         }
 
         return snapshots;
+    }
+
+    private static bool IsInaccessibleProcess(int pid, DateTimeOffset nowUtc)
+    {
+        lock (InaccessibleProcessLock)
+        {
+            return InaccessibleProcessUntilUtc.TryGetValue(pid, out var retryAt) && retryAt > nowUtc;
+        }
+    }
+
+    private static void MarkInaccessibleProcess(int pid, DateTimeOffset nowUtc)
+    {
+        lock (InaccessibleProcessLock)
+        {
+            InaccessibleProcessUntilUtc[pid] = nowUtc.Add(InaccessibleProcessTtl);
+        }
+    }
+
+    private static void PruneInaccessibleProcesses(DateTimeOffset nowUtc)
+    {
+        lock (InaccessibleProcessLock)
+        {
+            if (InaccessibleProcessUntilUtc.Count == 0)
+            {
+                return;
+            }
+
+            var expired = InaccessibleProcessUntilUtc
+                .Where(kvp => kvp.Value <= nowUtc)
+                .Select(kvp => kvp.Key)
+                .ToList();
+
+            foreach (var pid in expired)
+            {
+                InaccessibleProcessUntilUtc.Remove(pid);
+            }
+        }
     }
 
     private static bool ReadPhysicalMemoryBytes(out double totalBytes, out double freeBytes)
