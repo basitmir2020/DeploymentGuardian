@@ -724,8 +724,8 @@ public class TelegramSetupAssistant
         using var process = new Process { StartInfo = CreateProcessStartInfo(command) };
         process.Start();
 
-        var stdout = process.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
         if (!process.WaitForExit(timeoutMs))
         {
             try
@@ -737,9 +737,13 @@ public class TelegramSetupAssistant
                 // ignore kill errors
             }
 
-            return new CommandResult(-1, stdout.Trim(), stderr.Trim(), true);
+            var timeoutStdout = stdoutTask.IsCompleted ? stdoutTask.GetAwaiter().GetResult() : string.Empty;
+            var timeoutStderr = stderrTask.IsCompleted ? stderrTask.GetAwaiter().GetResult() : string.Empty;
+            return new CommandResult(-1, timeoutStdout.Trim(), timeoutStderr.Trim(), true);
         }
 
+        var stdout = stdoutTask.GetAwaiter().GetResult();
+        var stderr = stderrTask.GetAwaiter().GetResult();
         return new CommandResult(process.ExitCode, stdout.Trim(), stderr.Trim(), false);
     }
 

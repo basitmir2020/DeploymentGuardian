@@ -25,15 +25,16 @@ public class ShellHelper : IShellHelper
 
         using var process = new Process();
         process.StartInfo.FileName = "/bin/bash";
-        process.StartInfo.Arguments = $"-c \"{command}\"";
+        process.StartInfo.ArgumentList.Add("-lc");
+        process.StartInfo.ArgumentList.Add(command);
         process.StartInfo.RedirectStandardOutput = true;
         process.StartInfo.RedirectStandardError = true;
         process.StartInfo.UseShellExecute = false;
         process.StartInfo.CreateNoWindow = true;
 
         process.Start();
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
+        var outputTask = process.StandardOutput.ReadToEndAsync();
+        var errorTask = process.StandardError.ReadToEndAsync();
 
         if (!process.WaitForExit(DefaultTimeoutMs))
         {
@@ -46,6 +47,9 @@ public class ShellHelper : IShellHelper
                 // Ignore kill failures after timeout.
             }
 
+            var output = outputTask.IsCompleted ? outputTask.GetAwaiter().GetResult() : string.Empty;
+            var error = errorTask.IsCompleted ? errorTask.GetAwaiter().GetResult() : string.Empty;
+
             return new ShellCommandResult
             {
                 Command = command,
@@ -56,11 +60,14 @@ public class ShellHelper : IShellHelper
             };
         }
 
+        var finalOutput = outputTask.GetAwaiter().GetResult();
+        var finalError = errorTask.GetAwaiter().GetResult();
+
         return new ShellCommandResult
         {
             Command = command,
-            StdOut = output.Trim(),
-            StdErr = error.Trim(),
+            StdOut = finalOutput.Trim(),
+            StdErr = finalError.Trim(),
             ExitCode = process.ExitCode
         };
     }

@@ -6,6 +6,8 @@ public class MemoryTrendAnalyzer
 {
     private readonly string _logFilePath;
     private readonly object _fileLock = new();
+    private readonly Queue<double> _recentSamples = new();
+    private int _loadedSampleCount;
 
     /// <summary>
     /// Creates a memory trend analyzer that stores samples in the given log path.
@@ -35,26 +37,70 @@ public class MemoryTrendAnalyzer
                     Directory.CreateDirectory(directory);
                 }
 
+                EnsureSamplesLoaded(sampleCount);
+
                 File.AppendAllText(
                     _logFilePath,
                     $"{DateTime.UtcNow:O},{current.ToString(CultureInfo.InvariantCulture)}{Environment.NewLine}");
 
-                var values = File.ReadAllLines(_logFilePath)
-                    .TakeLast(sampleCount)
-                    .Select(ParseMemoryValue)
-                    .Where(v => v.HasValue)
-                    .Select(v => v!.Value)
-                    .ToList();
+                _recentSamples.Enqueue(current);
+                while (_recentSamples.Count > sampleCount)
+                {
+                    _recentSamples.Dequeue();
+                }
 
-                return values.Count == sampleCount &&
-                       values.SequenceEqual(values.OrderBy(x => x)) &&
-                       values.Last() > alertThresholdPercent;
+                if (_recentSamples.Count != sampleCount)
+                {
+                    return false;
+                }
+
+                var previous = double.MinValue;
+                foreach (var value in _recentSamples)
+                {
+                    if (value < previous)
+                    {
+                        return false;
+                    }
+
+                    previous = value;
+                }
+
+                return previous > alertThresholdPercent;
             }
             catch
             {
                 return false;
             }
         }
+    }
+
+    private void EnsureSamplesLoaded(int sampleCount)
+    {
+        if (_loadedSampleCount >= sampleCount)
+        {
+            return;
+        }
+
+        _recentSamples.Clear();
+
+        if (File.Exists(_logFilePath))
+        {
+            foreach (var line in File.ReadLines(_logFilePath).TakeLast(sampleCount))
+            {
+                var value = ParseMemoryValue(line);
+                if (value.HasValue)
+                {
+                    _recentSamples.Enqueue(value.Value);
+                }
+            }
+        }
+
+        while (_recentSamples.Count > sampleCount)
+        {
+            _recentSamples.Dequeue();
+        }
+
+        _loadedSampleCount = sampleCount;
     }
 
     /// <summary>
