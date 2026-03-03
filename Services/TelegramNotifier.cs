@@ -36,15 +36,47 @@ public class TelegramNotifier : INotifier
     /// </summary>
     public async Task SendAsync(string message)
     {
+        await SendTrackedAsync(message);
+    }
+
+    public async Task<string?> SendTrackedAsync(string message)
+    {
         if (string.IsNullOrWhiteSpace(message))
         {
-            return;
+            return null;
         }
 
         var response = await HttpClient.PostAsync(
             $"https://api.telegram.org/bot{_token}/sendMessage",
             new FormUrlEncodedContent([
                 new KeyValuePair<string, string>("chat_id", _chatId),
+                new KeyValuePair<string, string>("text", message)
+            ]));
+
+        response.EnsureSuccessStatusCode();
+
+        var content = await response.Content.ReadAsStringAsync();
+        using var doc = System.Text.Json.JsonDocument.Parse(content);
+        if (doc.RootElement.TryGetProperty("result", out var result) && result.TryGetProperty("message_id", out var msgId))
+        {
+            return msgId.GetInt64().ToString();
+        }
+
+        return null;
+    }
+
+    public async Task EditTrackedAsync(string trackingId, string message)
+    {
+        if (string.IsNullOrWhiteSpace(trackingId) || string.IsNullOrWhiteSpace(message))
+        {
+            return;
+        }
+
+        var response = await HttpClient.PostAsync(
+            $"https://api.telegram.org/bot{_token}/editMessageText",
+            new FormUrlEncodedContent([
+                new KeyValuePair<string, string>("chat_id", _chatId),
+                new KeyValuePair<string, string>("message_id", trackingId),
                 new KeyValuePair<string, string>("text", message)
             ]));
 

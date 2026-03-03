@@ -446,6 +446,7 @@ public class TelegramSetupAssistant
             "3. Skip installed tools.\n" +
             "4. No destructive commands.\n" +
             "5. Ensure recommended stack fits strictly within the system's available CPU and Memory constraints provided in the Snapshot.\n" +
+            "6. Focus strictly on the requested technology. DO NOT containerize or use Docker unless explicitly requested in the prompt.\n" +
             $"Request: {userRequest}\n" +
             $"Snapshot:\n{serverSnapshot}";
     }

@@ -93,11 +93,12 @@ public class LlamaCppAdvisor : IAiAdvisor
         return await ExecutePromptAsync(payload);
     }
 
-    private object BuildStandardPayload(string systemPrompt, string userPrompt)
+    private object BuildStandardPayload(string systemPrompt, string userPrompt, bool stream = false)
     {
         return new
         {
             model = _model,
+            stream = stream,
             messages = new[]
             {
                 new { role = "system", content = systemPrompt },
@@ -130,30 +131,34 @@ public class LlamaCppAdvisor : IAiAdvisor
 
     public async IAsyncEnumerable<string> GetSuggestionsStreamAsync(string summary, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(summary))
-        {
-            yield break;
-        }
+        if (string.IsNullOrWhiteSpace(summary)) yield break;
+        var payload = BuildStandardPayload("You are a DevOps advisor. Give concise, actionable mitigation steps.", summary, true);
+        await foreach (var chunk in ExecuteStreamPromptAsync(payload, cancellationToken)) yield return chunk;
+    }
 
-        var payload = new
-        {
-            model = _model,
-            stream = true,
-            messages = new[]
-            {
-                new
-                {
-                    role = "system",
-                    content = "You are a DevOps advisor. Give concise, actionable mitigation steps."
-                },
-                new
-                {
-                    role = "user",
-                    content = summary
-                }
-            }
-        };
+    public async IAsyncEnumerable<string> GetImplementationStepsStreamAsync(string suggestions, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(suggestions)) yield break;
+        var payload = BuildStandardPayload("You are a DevOps engineer. Based on these suggestions, provide the EXACT shell commands needed to implement them. NO markdown blocks or explanations, just the raw commands.", suggestions, true);
+        await foreach (var chunk in ExecuteStreamPromptAsync(payload, cancellationToken)) yield return chunk;
+    }
 
+    public async IAsyncEnumerable<string> GetSecuritySuggestionsStreamAsync(string securitySummary, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(securitySummary)) yield break;
+        var payload = BuildStandardPayload("You are a Cloud Security Consultant. Analyze this server security state and provide specific, actionable hardening advice.", securitySummary, true);
+        await foreach (var chunk in ExecuteStreamPromptAsync(payload, cancellationToken)) yield return chunk;
+    }
+
+    public async IAsyncEnumerable<string> GetPerformanceTuningStreamAsync(string metricsSummary, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(metricsSummary)) yield break;
+        var payload = BuildStandardPayload("You are a Systems Architect. Review these server hardware metrics and explain how to configure this machine to its absolute maximum potential without risking a crash (e.g., precise swap sizing, connection limits, etc).", metricsSummary, true);
+        await foreach (var chunk in ExecuteStreamPromptAsync(payload, cancellationToken)) yield return chunk;
+    }
+
+    private async IAsyncEnumerable<string> ExecuteStreamPromptAsync(object payload, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
         using var request = new HttpRequestMessage(HttpMethod.Post, _chatEndpoint)
         {
             Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json")
@@ -173,29 +178,16 @@ public class LlamaCppAdvisor : IAiAdvisor
         while (!cancellationToken.IsCancellationRequested)
         {
             var line = await reader.ReadLineAsync(cancellationToken);
-            if (line is null)
-            {
-                break;
-            }
-
-            if (string.IsNullOrWhiteSpace(line))
-            {
-                continue;
-            }
+            if (line is null) break;
+            if (string.IsNullOrWhiteSpace(line)) continue;
 
             if (line.StartsWith("data: "))
             {
                 var data = line.Substring(6).Trim();
-                if (data == "[DONE]")
-                {
-                    break;
-                }
+                if (data == "[DONE]") break;
 
                 var chunk = ExtractMessageText(data);
-                if (!string.IsNullOrWhiteSpace(chunk))
-                {
-                    yield return chunk;
-                }
+                if (!string.IsNullOrWhiteSpace(chunk)) yield return chunk;
             }
         }
     }

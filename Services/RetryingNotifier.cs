@@ -22,7 +22,13 @@ public class RetryingNotifier : INotifier
     /// <summary>
     /// Sends a message and retries transient failures up to configured attempts.
     /// </summary>
-    public async Task SendAsync(string message)
+    public Task SendAsync(string message) => ExecuteWithRetryAsync(async () => { await _innerNotifier.SendAsync(message); return true; });
+
+    public Task<string?> SendTrackedAsync(string message) => ExecuteWithRetryAsync(() => _innerNotifier.SendTrackedAsync(message));
+
+    public Task EditTrackedAsync(string trackingId, string message) => ExecuteWithRetryAsync(async () => { await _innerNotifier.EditTrackedAsync(trackingId, message); return true; });
+
+    private async Task<T> ExecuteWithRetryAsync<T>(Func<Task<T>> action)
     {
         Exception? lastError = null;
 
@@ -30,8 +36,7 @@ public class RetryingNotifier : INotifier
         {
             try
             {
-                await _innerNotifier.SendAsync(message);
-                return;
+                return await action();
             }
             catch (Exception ex)
             {

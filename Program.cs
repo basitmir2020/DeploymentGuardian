@@ -579,42 +579,95 @@ static void DispatchAiFollowUpBackground(
 {
     _ = Task.Run(async () =>
     {
+        async Task<string> StreamPhaseAsync(
+            Func<IAsyncEnumerable<string>> streamFunc,
+            Func<Task<string>> basicFunc,
+            string headerPrefix)
+        {
+            var trackId = await notifier.SendTrackedAsync($"{headerPrefix}\nGenerating...");
+            if (trackId == null)
+            {
+                var fallbackResponse = await basicFunc();
+                if (!string.IsNullOrWhiteSpace(fallbackResponse))
+                {
+                    await notifier.SendAsync($"{headerPrefix}\n{fallbackResponse.Trim()}");
+                }
+                return fallbackResponse;
+            }
+
+            var sb = new StringBuilder();
+            var lastUpdate = DateTime.UtcNow;
+
+            try
+            {
+                await foreach (var chunk in streamFunc())
+                {
+                    sb.Append(chunk);
+                    if ((DateTime.UtcNow - lastUpdate).TotalSeconds > 1.5)
+                    {
+                        var preview = sb.ToString();
+                        if (preview.Length > 3500) preview = preview[..3500] + "...";
+                        await notifier.EditTrackedAsync(trackId, $"{headerPrefix}\n{preview}");
+                        lastUpdate = DateTime.UtcNow;
+                    }
+                }
+                
+                var finalContent = sb.ToString().Trim();
+                if (string.IsNullOrWhiteSpace(finalContent))
+                {
+                    finalContent = "No suggestions generated.";
+                }
+                else if (finalContent.Length > 3500)
+                {
+                    finalContent = finalContent[..3500] + "...";
+                }
+                
+                await notifier.EditTrackedAsync(trackId, $"{headerPrefix}\n{finalContent}");
+                return sb.ToString();
+            }
+            catch (Exception ex)
+            {
+                await notifier.EditTrackedAsync(trackId, $"{headerPrefix}\nError generating response: {ex.Message}");
+                throw;
+            }
+        }
+
         try
         {
             // Phase 2: Diagnostics & Suggestions
             var summary = BuildAdvisorSummary(report, context, appProfile);
-            var suggestions = await aiAdvisor.GetSuggestionsAsync(summary);
+            var suggestions = await StreamPhaseAsync(
+                () => aiAdvisor.GetSuggestionsStreamAsync(summary),
+                () => aiAdvisor.GetSuggestionsAsync(summary),
+                "🤖 AI Diagnostics & Suggestions:");
+
             if (!string.IsNullOrWhiteSpace(suggestions))
             {
-                await notifier.SendAsync($"🤖 AI Diagnostics & Suggestions:\n{suggestions.Trim()}");
-
                 // Phase 3: Implementation Steps
-                var implSteps = await aiAdvisor.GetImplementationStepsAsync(suggestions);
-                if (!string.IsNullOrWhiteSpace(implSteps))
-                {
-                    await notifier.SendAsync($"🛠️ AI Implementation Steps:\n{implSteps.Trim()}");
-                }
+                await StreamPhaseAsync(
+                    () => aiAdvisor.GetImplementationStepsStreamAsync(suggestions),
+                    () => aiAdvisor.GetImplementationStepsAsync(suggestions),
+                    "🛠️ AI Implementation Steps:");
             }
 
             // Phase 4: Security Audit
             var securitySummary = BuildSecuritySummary(context.Security);
-            var securityAdvice = await aiAdvisor.GetSecuritySuggestionsAsync(securitySummary);
-            if (!string.IsNullOrWhiteSpace(securityAdvice))
-            {
-                await notifier.SendAsync($"🔒 AI Security Audit:\n{securityAdvice.Trim()}");
-            }
+            await StreamPhaseAsync(
+                () => aiAdvisor.GetSecuritySuggestionsStreamAsync(securitySummary),
+                () => aiAdvisor.GetSecuritySuggestionsAsync(securitySummary),
+                "🔒 AI Security Audit:");
 
             // Phase 5: Performance Tuning
             var metricsSummary = $"CPU Cores: {context.Metrics.CpuCores}, Total RAM: {context.Metrics.RamTotalMb} MB, CPU Load: {context.Metrics.CpuLoad}%, RAM Usage: {context.Metrics.RamUsagePercent}%";
-            var perfAdvice = await aiAdvisor.GetPerformanceTuningAsync(metricsSummary);
-            if (!string.IsNullOrWhiteSpace(perfAdvice))
-            {
-                await notifier.SendAsync($"🚀 AI Performance Tuning:\n{perfAdvice.Trim()}");
-            }
+            await StreamPhaseAsync(
+                () => aiAdvisor.GetPerformanceTuningStreamAsync(metricsSummary),
+                () => aiAdvisor.GetPerformanceTuningAsync(metricsSummary),
+                "🚀 AI Performance Tuning:");
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Background AI multi-phase task failed.");
+            await notifier.SendAsync($"⚠️ AI Pipeline Error: {ex.Message}");
         }
     });
 }
